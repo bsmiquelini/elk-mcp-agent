@@ -1,0 +1,32 @@
+replicaCount: 1
+
+image:
+  repository: ollama/ollama
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 11434
+
+env:
+  - name: OLLAMA_HOST
+    value: "0.0.0.0:11434"
+  - name: OLLAMA_KEEP_ALIVE
+    value: "24h"
+  - name: OLLAMA_NUM_CTX
+    value: "8192"
+
+persistence:
+  enabled: true
+  size: 100Gi
+  accessModes:
+    - ReadWriteOnce
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "2Gi"
+  limits:
+    cpu: "4"
+    memory: "8Gi"

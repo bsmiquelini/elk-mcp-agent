@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elk-mcp-agent
+  namespace: observability-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elk-mcp-agent
+  template:
+    metadata:
+      labels:
+        app: elk-mcp-agent
+    spec:
+      containers:
+        - name: agent
+          image: registry.exemplo.intra/observability/elk-mcp-agent/agent:v1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          envFrom:
+            - configMapRef:
+                name: elk-mcp-agent-config
+            - secretRef:
+                name: elk-mcp-agent-secrets
+          volumeMounts:
+            - name: dashboards
+              mountPath: /app/artifacts
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+      volumes:
+        - name: dashboards
+          emptyDir: {}

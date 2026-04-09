@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elk-mcp-server
+  namespace: observability-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elk-mcp-server
+  template:
+    metadata:
+      labels:
+        app: elk-mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          image: registry.exemplo.intra/observability/elk-mcp-agent/mcp-server:v1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
+          envFrom:
+            - configMapRef:
+                name: elk-mcp-agent-config
+            - secretRef:
+                name: elk-mcp-agent-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"

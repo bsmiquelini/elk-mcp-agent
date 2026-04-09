@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elk-mcp-agent-question
+  namespace: observability-ai
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: agent
+          image: registry.exemplo.intra/observability/elk-mcp-agent/agent:v1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-lc"]
+          args:
+            - python3 agent/main.py --question "$QUESTION"
+          env:
+            - name: QUESTION
+              value: "Qual foi o ultimo workflow que rodou?"
+          envFrom:
+            - configMapRef:
+                name: elk-mcp-agent-config
+            - secretRef:
+                name: elk-mcp-agent-secrets
+          volumeMounts:
+            - name: dashboards
+              mountPath: /app/artifacts
+      volumes:
+        - name: dashboards
+          emptyDir: {}

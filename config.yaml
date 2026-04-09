@@ -1,0 +1,216 @@
+# ──────────────────────────────────────────────────────────────
+# ELK MCP Agent — Configuração Central
+# ──────────────────────────────────────────────────────────────
+
+elasticsearch:
+  url:        "http://localhost:9200"
+  username:   "elastic"
+  password:   "changeme123"
+  verify_ssl: false
+  timeout:    30
+  index:      "github-workflows*"
+  time_field: "@timestamp"
+  max_time_range_days: 365
+  default_time_range:  "7d"
+
+domain:
+  name:        "GitHub Workflow Intelligence"
+  description: >
+    Eventos de workflows, checks e deploys do GitHub Actions.
+    Os documentos podem trazer workflow_run, check_run, deployment,
+    deployment_status, repository e metadados organizacionais.
+
+  field_semantics:
+    "@timestamp":
+      description: "Timestamp principal do evento no índice."
+    "workflow_run.run_started_at":
+      description: "Início da execução do workflow."
+    "workflow_run.conclusion":
+      description: "Resultado final do workflow quando disponível."
+    "workflow_run.status":
+      description: "Status do workflow quando a conclusão final ainda não existe."
+    "workflow_run.name":
+      description: "Nome da execução do workflow."
+    "repository.topics":
+      description: "Tags do repositório no GitHub. Pode ser útil para inferir domínio ou stack."
+      is_array: true
+    "check_run.name":
+      description: "Nome do check/job associado ao workflow. Útil para perguntas de build, test e deploy."
+    "check_run.conclusion":
+      description: "Resultado final do check/job quando disponível."
+    "check_run.status":
+      description: "Status atual do check/job."
+    "deployment.task":
+      description: "Tipo de tarefa de deploy. Ex: deploy."
+    "deployment.environment":
+      description: "Ambiente do deploy. Ex: DEV, HML, PRD."
+    "deployment_status.state":
+      description: "Estado do deploy. Ex: success, failure, error, waiting."
+    "repository.language":
+      description: "Linguagem principal do repositório quando disponível."
+    "repository.name":
+      description: "Nome curto do repositório."
+    "repository.full_name":
+      description: "Nome completo do repositório no formato org/repo."
+    "sender.login":
+      description: "Usuário ou bot que gerou o evento."
+    "workflow_run.head_branch":
+      description: "Branch associada à execução do workflow."
+
+  vocabulary:
+    "produção":    "deployment.environment = PRD ou branch principal"
+    "prod":        "deployment.environment = PRD ou branch principal"
+    "último":      "ordenar pelo melhor campo temporal disponível desc"
+    "ultimo":      "ordenar pelo melhor campo temporal disponível desc"
+    "homologação": "deployment.environment contém HML, HOM ou staging"
+    "hom":         "deployment.environment contém HML, HOM ou staging"
+    "staging":     "deployment.environment contém staging"
+    "falhou":      "valores failure, failed, error ou timed_out em campos de status/conclusion"
+    "falha":       "valores failure, failed, error ou timed_out em campos de status/conclusion"
+    "sucesso":     "valores success ou completed em campos de status/conclusion"
+    "deploy":      "campos deployment.* ou nomes de workflow/check contendo deploy"
+    "deploys":     "campos deployment.* ou nomes de workflow/check contendo deploy"
+    "workflow":    "campos workflow_run.* ou workflow.*"
+    "build":       "campos check_run.name ou jobs.name contendo build ou compile"
+    "java":        "repository.language = java quando disponível"
+    "recorrente":  "use um período maior como 30d ou 90d"
+    "recorrentes": "use um período maior como 30d ou 90d"
+    "recurrente":  "use um período maior como 30d ou 90d"
+    "recurrentes": "use um período maior como 30d ou 90d"
+    "taxa":        "compare contagens por workflow_run.conclusion"
+    "esteira":     "workflow"
+    "esteiras":    "workflow"
+    "pipeline":    "workflow"
+    "pipelines":   "workflow"
+    "repositório": "repository"
+    "repo":        "repository"
+
+  semantic_rules:
+    architecture:
+      aliases:
+        - "arquitetura"
+        - "arquiteturas"
+        - "architecture"
+        - "architectures"
+      value_templates:
+        - "archtecture-{value}"
+        - "architecture-{value}"
+        - "{value}"
+
+    team:
+      aliases:
+        - "time"
+        - "vskey"
+        - "value stream"
+        - "squad"
+      repo_patterns:
+        - "*/{value}-*"
+        - "{value}-*"
+
+    environment_aliases:
+      prd:
+        label: "ambiente PRD"
+        aliases: ["prd", "prod", "producao", "produção", "producao", "production"]
+        exact_values: ["PRD", "PROD", "PRODUCTION"]
+        contains_tokens: ["prd", "prod", "production", "release"]
+        field_preferences:
+          - "environment_field"
+          - "workflow_name_field"
+          - "job_name_field"
+          - "branch_field"
+      hml:
+        label: "ambiente HML"
+        aliases: ["hml", "hom", "homolog", "homologacao", "homologação"]
+        exact_values: ["HML", "HOM", "HOMOLOG"]
+        contains_tokens: ["hml", "hom", "homolog", "staging", "stg"]
+        field_preferences:
+          - "environment_field"
+          - "workflow_name_field"
+          - "job_name_field"
+          - "branch_field"
+      dev:
+        label: "ambiente DEV"
+        aliases: ["dev", "sandbox"]
+        exact_values: ["DEV", "SANDBOX", "DEVELOP"]
+        contains_tokens: ["dev", "sandbox", "develop"]
+        field_preferences:
+          - "environment_field"
+          - "workflow_name_field"
+          - "job_name_field"
+          - "branch_field"
+
+    workflow_categories:
+      build:
+        aliases: ["build", "compile"]
+        contains: ["build", "compile"]
+      deploy:
+        aliases: ["deploy", "release"]
+        contains: ["deploy", "release"]
+      security:
+        aliases: ["security", "scan", "sast"]
+        contains: ["security", "scan", "sast"]
+      test:
+        aliases: ["test", "tests"]
+        contains: ["test"]
+
+  thresholds:
+    failure_rate:
+      healthy:  5
+      warning:  10
+      critical: 15
+    duration_minutes:
+      healthy:  10
+      warning:  20
+      critical: 30
+
+agent:
+  # provider: "ollama" → usa modelo local (caminho padrão do MVP)
+  # provider: "groq"   → usa Groq API (opcional)
+  provider:    "ollama"
+  model:       "qwen2.5:7b"
+  api_key:     ""
+  temperature: 0.1
+  max_tokens:  4096
+  timeout:     60
+
+  # Usado apenas quando provider = "ollama"
+  ollama_model:   "qwen2.5:7b"
+  api_base:       "http://127.0.0.1:11434"
+  ollama_timeout: 300
+
+  session:
+    max_history_messages:           20
+    keep_context_between_questions: true
+
+  interface:
+    language:        "pt-BR"
+    show_tool_calls: false
+    show_vocabulary_hints: false
+    show_charts:     true
+    chart_width:     60
+    max_chart_bars:  15
+    generate_dashboard_html: true
+    dashboard_output_dir: "artifacts/dashboards"
+    show_startup_checks: false
+    show_provider_status: false
+    show_schema_status: false
+    show_welcome_panel: true
+    banner_title: "GitHub Workflow Intelligence"
+    banner_subtitle: ""
+    banner_help: "Digite sair para encerrar · limpar para resetar contexto"
+
+mcp:
+  transport: "stdio"
+  tools:
+    explore_field:
+      enabled:     true
+      max_buckets: 200
+      description: "Descobre valores únicos de qualquer campo do índice"
+    aggregate:
+      enabled:      true
+      max_agg_size: 500
+      description:  "Executa agregações arbitrárias no Elasticsearch"
+    search:
+      enabled:     true
+      max_results: 50
+      description: "Busca documentos com filtros livres incluindo campos nested"

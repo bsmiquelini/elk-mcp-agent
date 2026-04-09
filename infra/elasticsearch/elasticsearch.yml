@@ -1,0 +1,14 @@
+cluster.name: elk-mcp-cluster
+node.name: elk_elasticsearch
+
+network.host: 0.0.0.0
+http.port: 9200
+
+discovery.type: single-node
+
+xpack.security.enabled: true
+xpack.security.http.ssl.enabled: false
+xpack.license.self_generated.type: basic
+
+# Permite que o Kibana se conecte via HTTP interno
+xpack.security.authc.api_key.enabled: true

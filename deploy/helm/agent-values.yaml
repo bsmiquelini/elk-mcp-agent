@@ -1,0 +1,37 @@
+replicaCount: 1
+
+image:
+  repository: registry.exemplo.intra/observability/elk-mcp-agent/agent
+  tag: v1.0.0
+  pullPolicy: IfNotPresent
+
+command:
+  - sleep
+  - infinity
+
+env:
+  ELASTICSEARCH_URL: "https://elk-prod.exemplo.intra:9200"
+  ELASTICSEARCH_USERNAME: "elastic"
+  ELASTICSEARCH_INDEX: "github-workflows*"
+  ELASTICSEARCH_VERIFY_SSL: "true"
+  AGENT_PROVIDER: "ollama"
+  OLLAMA_API_BASE: "http://ollama.observability-ai.svc.cluster.local:11434"
+  OLLAMA_MODEL: "qwen2.5:7b"
+
+secretEnv:
+  ELASTIC_PASSWORD: "troque-esta-senha"
+  GROQ_API_KEY: ""
+
+artifacts:
+  enabled: true
+  mountPath: /app/artifacts
+  storage:
+    type: emptyDir
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "2"
+    memory: "2Gi"
