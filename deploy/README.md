@@ -32,6 +32,36 @@ VERSION=v1.0.0 \
 docker buildx bake -f deploy/docker-bake.hcl release --push
 ```
 
+## Build e push via GitHub Actions
+
+O workflow [build-agent-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-agent-image.yml) publica a imagem do agente no GHCR usando o `GITHUB_TOKEN` do repositório.
+
+Imagem publicada:
+
+```bash
+ghcr.io/<owner>/elk-mcp-agent-agent
+```
+
+Tags geradas:
+- nome da branch
+- tag Git
+- `sha-<commit>`
+- `latest` na branch padrão
+
+Uso em CLI:
+
+```bash
+docker run --rm -it ghcr.io/<owner>/elk-mcp-agent-agent:develop
+```
+
+Uso como serviço HTTP:
+
+```bash
+docker run --rm -p 8787:8787 \
+  ghcr.io/<owner>/elk-mcp-agent-agent:develop \
+  agent/http_service.py --host 0.0.0.0 --port 8787
+```
+
 ## Kubernetes
 
 Para produção interna, o caminho recomendado deixa o modelo atrás de um gateway

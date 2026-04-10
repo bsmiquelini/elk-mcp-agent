@@ -275,6 +275,32 @@ docker run --rm -p 8787:8787 \
   agent/http_service.py --host 0.0.0.0 --port 8787
 ```
 
+### Build e push automatizados no GitHub
+
+O workflow [build-agent-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-agent-image.yml) faz o build da imagem do agente com MCP embutido e publica no GHCR.
+
+Comportamento:
+- `pull_request`: faz apenas build de validação
+- `push` em `main` e `develop`: faz build e push
+- `push` de tag `v*`: faz build e push
+- `workflow_dispatch`: execução manual
+
+A mesma imagem pode ser usada nos dois modos:
+- CLI: `python3 agent/main.py` como comando padrão
+- serviço HTTP: sobrescrevendo o comando para `agent/http_service.py`
+
+Exemplos com GHCR:
+
+```bash
+docker run --rm -it ghcr.io/<owner>/elk-mcp-agent-agent:develop
+```
+
+```bash
+docker run --rm -p 8787:8787 \
+  ghcr.io/<owner>/elk-mcp-agent-agent:develop \
+  agent/http_service.py --host 0.0.0.0 --port 8787
+```
+
 ## 🔍 Troubleshooting
 
 ### Autenticação no Elasticsearch
