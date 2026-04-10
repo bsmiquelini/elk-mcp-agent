@@ -16,6 +16,8 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+    networks:
+      - elk-net
 
   kibana:
     image: docker.elastic.co/kibana/kibana:8.13.0
@@ -38,23 +40,51 @@ services:
       interval: 20s
       timeout: 10s
       retries: 10
+    networks:
+      - elk-net
 
   ollama:
     image: ollama/ollama:latest
     container_name: elk_ollama
     ports:
-      - "${OLLAMA_HOST_PORT:-11434}:11434"
+      - "${OLLAMA_HOST_PORT:-11435}:11434"
     volumes:
       - ollama_data:/root/.ollama
     environment:
       - OLLAMA_NUM_CTX=8192
       - OLLAMA_KEEP_ALIVE=24h
       - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=*
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 15s
       timeout: 10s
       retries: 10
+    networks:
+      - elk-net
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: openwebui
+    ports:
+      - "3000:8080"
+    environment:
+      - 'OLLAMA_BASE_URL=http://ollama:11434'
+      - 'BACKEND_URL=http://ollama:11434'
+      - 'WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-super_secret_key}'
+    volumes:
+      - open-webui:/app/backend/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - elk-net
 
   nginx:
     image: nginx:1.25-alpine
@@ -69,6 +99,10 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
+      kibana:
+        condition: service_healthy
+    networks:
+      - elk-net
 
   agent:
     build:
@@ -93,6 +127,8 @@ services:
       - app
     stdin_open: true
     tty: true
+    networks:
+      - elk-net
 
   mcp_server:
     build:
@@ -112,7 +148,14 @@ services:
       - app
     stdin_open: true
     tty: true
+    networks:
+      - elk-net
+
+networks:
+  elk-net:
+    driver: bridge
 
 volumes:
   esdata:
   ollama_data:
+  open-webui:

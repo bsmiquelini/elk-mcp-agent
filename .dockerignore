@@ -8,6 +8,8 @@ __pycache__
 .env
 .env.*
 !.env.example
+docker-compose.yml
+infra
 infra/nginx/certs
 *.log
 artifacts
@@ -16,3 +18,4 @@ deploy/k8s/secret.*.yaml
 docker-compose.ymlbkp
 infra/nginx/nginx.conf.bkp
 .github
+ideia

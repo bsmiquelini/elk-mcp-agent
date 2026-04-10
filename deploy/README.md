@@ -9,6 +9,14 @@ Esta pasta concentra os artefatos práticos de publicação do projeto.
 - `k8s/`: manifests Kubernetes prontos para adaptação
 - `helm/`: exemplos de `values.yaml` para Helm
 
+Observação importante:
+
+- `docker-compose.yml` e `infra/` pertencem ao fluxo de teste pelo repositório
+- esses arquivos podem evoluir e ser versionados normalmente
+- eles **não** fazem parte da imagem final do agente
+
+Resumo dos modos de operação em [docs/testing-modes.md](/home/bruno/lab_ia/elk-mcp-agent/docs/testing-modes.md).
+
 ## Build com buildx bake
 
 Build local:
@@ -58,6 +66,7 @@ Boas práticas da imagem:
 - runtime sem root
 - dependências isoladas em `venv`
 - redução de contexto via [.dockerignore](/home/bruno/lab_ia/elk-mcp-agent/.dockerignore)
+- exclusão explícita de `docker-compose.yml` e `infra/` do contexto de build
 
 Uso em CLI:
 

@@ -28,6 +28,15 @@ Usuário (linguagem natural)
 - **config.yaml** — configuração central: conexão ES, domínio de negócio, vocabulário, thresholds
 - **docker-compose.yml** — Elasticsearch 8.13 + Kibana
 
+## Modos de uso
+
+O projeto foi organizado para funcionar em dois modos:
+
+- **modo repositório**: usa os artefatos versionados de `docker-compose.yml`, `infra/` e `scripts/` para testes locais e validação integrada
+- **modo imagem**: usa a imagem do agente para rodar em `CLI` ou `HTTP`, sem levar a infraestrutura local para dentro do container
+
+Detalhes operacionais em [docs/testing-modes.md](/home/bruno/lab_ia/elk-mcp-agent/docs/testing-modes.md).
+
 ## ⚙️ Pré-requisitos
 
 - Docker + Docker Compose
@@ -52,6 +61,33 @@ docker logs -f elk_elasticsearch 2>&1 | grep -E "started|error|warn"
 docker compose up -d kibana
 docker logs -f elk_kibana 2>&1 | grep -E "ready|error|warn"
 ```
+
+### Subir a stack local do repositório
+
+Para testar pelo repositório com interface visual e proxy local:
+
+```bash
+docker compose up -d elasticsearch kibana ollama openwebui nginx
+bash scripts/setup.sh
+```
+
+Opcionalmente, para subir também os serviços empacotados do projeto:
+
+```bash
+docker compose --profile app up -d --build
+```
+
+URLs úteis nesse modo:
+
+- `http://localhost:3000` para Open WebUI
+- `http://localhost` via Nginx para o Open WebUI proxied
+- `https://localhost` para Kibana via Nginx
+- `https://localhost:9243` para Elasticsearch via Nginx
+
+Observação:
+
+- por padrão o `docker-compose` publica o Ollama em `11435` no host para evitar conflito com um `Ollama` já instalado localmente
+- se quiser mudar isso, use `OLLAMA_HOST_PORT`, por exemplo `OLLAMA_HOST_PORT=11434 docker compose up -d ollama`
 
 ## 🔧 Configuração
 
@@ -278,6 +314,11 @@ Use o relatório executivo quando quiser consolidar vários indicadores em um HT
 
 ### Operacao em container
 
+Os arquivos `docker-compose.yml` e `infra/` continuam versionados para permitir
+testes reais pelo repositório, mas **não** são levados para a imagem final do
+agente. Isso é garantido pelo [Dockerfile](/home/bruno/lab_ia/elk-mcp-agent/agent/Dockerfile)
+e pelo [.dockerignore](/home/bruno/lab_ia/elk-mcp-agent/.dockerignore).
+
 CLI:
 
 ```bash
@@ -291,6 +332,15 @@ docker run --rm -p 8787:8787 \
   --env-file deploy/env/production.env.example \
   <imagem-agent> \
   agent/http_service.py --host 0.0.0.0 --port 8787
+```
+
+Se quiser validar explicitamente que a imagem está isolada da infraestrutura do
+repositório:
+
+```bash
+docker buildx build --load -t elk-mcp-agent:test -f agent/Dockerfile .
+docker run --rm elk-mcp-agent:test agent/main.py --help
+docker run --rm elk-mcp-agent:test agent/http_service.py --help
 ```
 
 ### Build e push automatizados no GitHub
