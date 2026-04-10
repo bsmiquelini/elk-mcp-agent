@@ -84,6 +84,109 @@ elasticsearch:
 python3 agent/main.py
 ```
 
+### Rodar como API HTTP interna
+
+```bash
+python3 agent/http_service.py --host 0.0.0.0 --port 8787
+```
+
+Endpoints:
+- `GET /healthz`
+- `POST /v1/ask`
+
+Exemplo:
+
+```bash
+curl -s http://localhost:8787/v1/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Qual foi o ultimo workflow que falhou em produção?"}'
+```
+
+### Provider corporativo recomendado
+
+Para produção interna, prefira um gateway central OpenAI-compatible:
+
+```bash
+export AGENT_PROVIDER=openai_compatible
+export LLM_API_BASE=https://llm-gateway.exemplo.intra/v1
+export LLM_MODEL=qwen2.5-72b-instruct
+python3 agent/main.py
+```
+
+Isso evita depender de `Ollama` na máquina do usuário final.
+
+## 🧪 Regressão e refinamento
+
+```bash
+# Smoke rápido
+python3 scripts/test_mvp_queries.py
+
+# Bateria ampliada de linguagem natural
+OLLAMA_API_BASE=http://127.0.0.1:11435 python3 scripts/test_cli_300_refinement.py
+
+# Validação cruzada CLI x Elasticsearch
+python3 scripts/test_cli_cross_validated.py
+
+# Suíte completa do MVP
+# 300 perguntas validadas contra o Elasticsearch + 20 relatórios executivos
+OLLAMA_API_BASE=http://127.0.0.1:11435 python3 scripts/test_full_300_validated.py
+
+# Smoke da API HTTP interna
+python3 scripts/test_http_service.py
+```
+
+## 📈 Relatório executivo
+
+```bash
+python3 scripts/generate_director_report.py \
+  --prompt "Quero um resumo executivo de CI/CD com foco em risco operacional, sucesso em PRD, lead time e aprovacoes pendentes"
+```
+
+O relatório consolidado é salvo em `artifacts/reports/` e referencia os dashboards HTML gerados em `artifacts/dashboards/`.
+
+Também é possível customizar período, seções e título:
+
+```bash
+python3 scripts/generate_director_report.py \
+  --prompt "Quero uma visão executiva das esteiras de api em produção" \
+  --time-range 30d \
+  --include overview,risk,success,prd,lead_time,approvals \
+  --title "Resumo Executivo - APIs em Produção"
+```
+
+Seções disponíveis em `--include`:
+- `overview`
+- `risk`
+- `success`
+- `lead_time`
+- `approvals`
+- `analysts`
+- `prd`
+- `hml`
+- `api`
+- `srv`
+- `bff`
+- `java`
+- `teams`
+
+## 🎨 Personalização visual
+
+O tema visual da CLI, dos dashboards HTML e dos relatórios executivos pode ser ajustado no bloco `ui` do [config.yaml](/home/bruno/lab_ia/elk-mcp-agent/config.yaml).
+
+Exemplos suportados:
+- `ui.branding.header_logo_png`: caminho para um PNG de logotipo exibido no cabeçalho do dashboard/relatório
+- `ui.branding.favicon_png` ou `ui.branding.favicon_emoji`: favicon do HTML
+- `ui.theme.accent`, `ui.theme.accent_2`, `ui.theme.background`: cores-base
+- `ui.theme.page_background_image` e `ui.theme.panel_background_image`: imagens opcionais
+- `ui.theme.custom_css_file`: CSS extra para customizações mais profundas
+- `ui.cli.assistant_icon`, `ui.cli.user_icon`, `ui.cli.thinking_icon`: ícones da experiência no terminal
+
+Teste rápido da camada visual:
+
+```bash
+python3 scripts/test_ui_rendering.py
+```
+
 ## 💬 Perguntas de exemplo
 
 Use estas perguntas diretamente na CLI do agente para interagir com os dados do Elasticsearch:
@@ -93,6 +196,62 @@ Use estas perguntas diretamente na CLI do agente para interagir com os dados do 
 - Quais os jobs com maior duração média?
 - Quanto tempo em média leva o deploy-prod?
 - Quais repositórios tiveram mais falhas na última semana?
+- Liste os repositórios que já executaram workflows em algum momento
+- Quais workflows da arquitetura de api foram executados no último mês?
+- Qual foi o último workflow que falhou em produção?
+- Liste os últimos projetos que tiveram deploy com falha
+- Quais arquiteturas executaram deploy em PRD no último mês?
+- Qual a porcentagem de falha e sucesso em deploys do time de devops?
+- Quais os últimos deploys das esteiras de bff?
+
+### Como escrever bons prompts
+
+Perguntas mais objetivas tendem a gerar respostas melhores e mais rápidas. Tente combinar:
+- métrica: `quantos`, `quais`, `qual a porcentagem`, `qual foi o ultimo`
+- recorte: `ultimo dia`, `ultima semana`, `ultimo mes`, `ultimos 90 dias`, `ate hoje`
+- dimensão: `workflow`, `job`, `repositorio`, `time`, `arquitetura`, `analista`
+- filtro de negócio: `PRD`, `HML`, `DEV`, `api`, `srv`, `bff`, `apim`, `java`, `node`, `deploy`, `build`
+
+Exemplos:
+- `python3 agent/main.py --question "Qual foi o ultimo workflow que falhou em produção?"`
+- `python3 agent/main.py --question "Liste os repositorios que falharam na ultima semana"`
+- `python3 agent/main.py --question "Quais workflows da arquitetura de api mais falharam nos ultimos 90 dias?"`
+- `python3 agent/main.py --question "Qual a porcentagem de falha e sucesso em deploys do time de ia?"`
+- `python3 agent/main.py --question "Quais os ultimos deploys das esteiras de apim?"`
+- `python3 agent/main.py --question "Quanto tempo leva a execucao media de esteiras de rollback?"`
+- `python3 agent/main.py --question "Qual foi o tempo entre a abertura do chamado do repositorio nada/arch-api-cash-cambio-contatos-ext e a primeira entrega em PRD?"`
+- `python3 agent/main.py --question "Qual foi o tempo entre a solicitacao de habilitacao da esteira do repositorio nada/devops-bff-pix-web e a primeira entrega em HML?"`
+- `python3 agent/main.py --question "Qual e a frequencia de deploy da arquitetura api?"`
+- `python3 agent/main.py --question "Quanto tempo leva em media entre o primeiro deploy em DEV e o primeiro deploy em PRD?"`
+- `python3 agent/main.py --question "Em media quantos deploys em DEV ocorrem para o deploy em PRD?"`
+- `python3 agent/main.py --question "Quais o email dos analistas incluidos nos deploys da arquitetura api?"`
+- `python3 agent/main.py --question "Qual o email do analista que engatilhou o ultimo deploy em PRD da esteira Deploy Staging?"`
+- `python3 agent/main.py --question "Quais os analistas que estao trabalhando na esteira Deploy Staging?"`
+
+### Prompts gerenciais
+
+Use o relatório executivo quando quiser consolidar vários indicadores em um HTML:
+
+- `python3 scripts/generate_director_report.py --prompt "Quero uma visão executiva semanal de risco operacional em PRD" --time-range 7d --include overview,risk,prd,approvals`
+- `python3 scripts/generate_director_report.py --prompt "Qual seria o relatorio gerencial para as arquiteturas api e srv nos ultimos 7 dias?" --time-range 7d --include overview,risk,success,lead_time,api,srv`
+- `python3 scripts/generate_director_report.py --prompt "Quero um resumo executivo de CI/CD com foco em risco operacional, sucesso em PRD, lead time e aprovacoes pendentes" --time-range 30d --include overview,risk,success,lead_time,approvals,prd`
+
+### Operacao em container
+
+CLI:
+
+```bash
+docker run --rm -it --env-file deploy/env/production.env.example <imagem-agent>
+```
+
+API HTTP:
+
+```bash
+docker run --rm -p 8787:8787 \
+  --env-file deploy/env/production.env.example \
+  <imagem-agent> \
+  agent/http_service.py --host 0.0.0.0 --port 8787
+```
 
 ## 🔍 Troubleshooting
 
@@ -559,3 +718,21 @@ Simular chamadas de tool em vez de executá-las de verdade
 Para melhor qualidade de respostas, prefira modelos maiores como qwen2.5:7b ou mistral:7b se houver recursos disponíveis.ollama pull qwen2.5:7b
 # Alterar model em config.yaml
 
+
+## Para a stack subir, rodar:
+
+# Permite masquerading (essencial para rede docker)
+sudo firewall-cmd --permanent --zone=public --add-masquerade
+
+# Adiciona a interface do docker à zona de confiança
+sudo firewall-cmd --permanent --zone=trusted --add-interface=docker0
+
+# Se o Docker criou uma interface específica para a rede elk-net (ex: br-xxxx), adicione-a também:
+# Você descobre o nome com: ip link show
+# sudo firewall-cmd --permanent --zone=trusted --add-interface=br-NOME_DA_REDE
+
+# Recarrega o firewall
+sudo firewall-cmd --reload
+
+# Reinicie o serviço do docker para garantir
+sudo systemctl restart docker

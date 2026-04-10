@@ -13,15 +13,23 @@ command -v python3 >/dev/null 2>&1 || fail "Python3 não encontrado"
 load_env_file
 
 info "Removendo índices github-workflows*..."
-HTTP_CODE=$(curl -s -o /tmp/reset_data_response.txt -w "%{http_code}" \
+INDICES=$(curl -s \
   -u "elastic:${ELASTIC_PASSWORD}" \
-  -X DELETE "http://localhost:9200/github-workflows*")
+  "http://localhost:9200/_cat/indices/github-workflows*?h=index" | tr '\n' ',' | sed 's/,$//')
 
-if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "404" ]; then
-  log "Índices removidos ou já inexistentes"
+if [ -z "$INDICES" ]; then
+  log "Nenhum índice github-workflows* encontrado"
 else
-  cat /tmp/reset_data_response.txt
-  fail "Falha ao remover índices github-workflows* (HTTP ${HTTP_CODE})"
+  HTTP_CODE=$(curl -s -o /tmp/reset_data_response.txt -w "%{http_code}" \
+    -u "elastic:${ELASTIC_PASSWORD}" \
+    -X DELETE "http://localhost:9200/${INDICES}")
+
+  if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "404" ]; then
+    log "Índices removidos com sucesso"
+  else
+    cat /tmp/reset_data_response.txt
+    fail "Falha ao remover índices github-workflows* (HTTP ${HTTP_CODE})"
+  fi
 fi
 
 rm -f /tmp/reset_data_response.txt

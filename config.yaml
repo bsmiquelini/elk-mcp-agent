@@ -73,6 +73,9 @@ domain:
     "workflow":    "campos workflow_run.* ou workflow.*"
     "build":       "campos check_run.name ou jobs.name contendo build ou compile"
     "java":        "repository.language = java quando disponível"
+    "node":        "repository.language = node quando disponível"
+    "nodejs":      "repository.language = node quando disponível"
+    "apim":        "topicos de arquitetura contendo archtecture-apim ou architecture-apim"
     "recorrente":  "use um período maior como 30d ou 90d"
     "recorrentes": "use um período maior como 30d ou 90d"
     "recurrente":  "use um período maior como 30d ou 90d"
@@ -92,6 +95,13 @@ domain:
         - "arquiteturas"
         - "architecture"
         - "architectures"
+        - "esteira"
+        - "esteiras"
+      known_values:
+        - "api"
+        - "srv"
+        - "bff"
+        - "apim"
       value_templates:
         - "archtecture-{value}"
         - "architecture-{value}"
@@ -100,7 +110,9 @@ domain:
     team:
       aliases:
         - "time"
+        - "times"
         - "vskey"
+        - "vskeys"
         - "value stream"
         - "squad"
       repo_patterns:
@@ -146,12 +158,18 @@ domain:
       deploy:
         aliases: ["deploy", "release"]
         contains: ["deploy", "release"]
+      rollback:
+        aliases: ["rollback", "roll back", "reversao", "reversão"]
+        contains: ["rollback"]
       security:
         aliases: ["security", "scan", "sast"]
         contains: ["security", "scan", "sast"]
       test:
         aliases: ["test", "tests"]
         contains: ["test"]
+      gate:
+        aliases: ["gate", "approval", "aprovacao", "aprovação"]
+        contains: ["gate", "approval"]
 
   thresholds:
     failure_rate:
@@ -164,8 +182,9 @@ domain:
       critical: 30
 
 agent:
-  # provider: "ollama" → usa modelo local (caminho padrão do MVP)
-  # provider: "groq"   → usa Groq API (opcional)
+  # provider: "ollama"            → laboratório/local
+  # provider: "groq"              → API pública (opcional)
+  # provider: "openai_compatible" → gateway corporativo / proxy interno
   provider:    "ollama"
   model:       "qwen2.5:7b"
   api_key:     ""
@@ -177,6 +196,16 @@ agent:
   ollama_model:   "qwen2.5:7b"
   api_base:       "http://127.0.0.1:11434"
   ollama_timeout: 300
+
+  # Usado quando provider = "openai_compatible"
+  openai_compatible:
+    api_base: ""
+    model: ""
+    api_key: ""
+    timeout: 60
+    auth_header: "Authorization"
+    auth_scheme: "Bearer"
+    extra_headers: {}
 
   session:
     max_history_messages:           20
@@ -198,6 +227,61 @@ agent:
     banner_title: "GitHub Workflow Intelligence"
     banner_subtitle: ""
     banner_help: "Digite sair para encerrar · limpar para resetar contexto"
+
+  service:
+    host: "0.0.0.0"
+    port: 8787
+    request_timeout_seconds: 180
+
+ui:
+  branding:
+    product_name: "GitHub Workflow Intelligence"
+    header_badge: "Executive CI/CD Intelligence"
+    favicon_emoji: "📊"
+    header_logo_png: ""
+    favicon_png: ""
+
+  theme:
+    background: "#f5f2ea"
+    panel: "#fffdf8"
+    ink: "#182028"
+    muted: "#5f6b76"
+    line: "#dfd6c6"
+    accent: "#174c4f"
+    accent_2: "#c46a2d"
+    success: "#1f7a45"
+    warning: "#a45b11"
+    danger: "#b23a2b"
+    hero_gradient_from: "#174c4f"
+    hero_gradient_to: "#1d3641"
+    page_background_image: ""
+    panel_background_image: ""
+    custom_css_file: ""
+
+  cli:
+    assistant_icon: "🤖"
+    user_icon: "🧑"
+    thinking_icon: "⏳"
+    info_icon: "ℹ️"
+    warning_icon: "⚠️"
+    error_icon: "❌"
+    success_icon: "✅"
+    border_style: "cyan"
+    response_border_style: "green"
+    title_style: "bold cyan"
+    prompt_style: "bold green"
+
+  reports:
+    show_management_table: true
+    show_recommendations: true
+    default_time_range: "30d"
+    default_sections:
+      - "overview"
+      - "risk"
+      - "success"
+      - "lead_time"
+      - "approvals"
+      - "prd"
 
 mcp:
   transport: "stdio"

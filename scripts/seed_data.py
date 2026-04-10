@@ -23,8 +23,10 @@ ES_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
 ES_USER = "elastic"
 ES_PASSWORD = os.getenv("ELASTIC_PASSWORD", "changeme123")
 INDEX_PREFIX = "github-workflows"
-DAYS = 90
-TARGET_DOCS = 500
+DAYS = 300
+TARGET_DOCS = 1800
+ES_REQUEST_TIMEOUT = int(os.getenv("ELASTICSEARCH_TIMEOUT", "60"))
+SEED_NOW = None
 
 ENTERPRISE = {
     "id": 36467,
@@ -37,7 +39,7 @@ ENTERPRISE = {
 
 ORGANIZATION = {
     "id": 151876077,
-    "login": "",
+    "login": "nada",
     "description": "Organization relacionada a projetos core do nada",
 }
 
@@ -59,19 +61,22 @@ GITHUB_APP = {
 }
 
 USERS = [
-    {"login": "leonardo-l-lotaif_nada", "type": "User"},
-    {"login": "maria.souza_nada", "type": "User"},
-    {"login": "joao.silva_nada", "type": "User"},
-    {"login": "github-actions[bot]", "type": "Bot"},
+    {"login": "leonardo-l-lotaif_nada", "email": "leonardo.lotaif@nada.com.br", "type": "User"},
+    {"login": "maria.souza_nada", "email": "maria.souza@nada.com.br", "type": "User"},
+    {"login": "joao.silva_nada", "email": "joao.silva@nada.com.br", "type": "User"},
+    {"login": "bruno.miquelini_nada", "email": "bruno.miquelini@nada.com.br", "type": "User"},
+    {"login": "ana.sre_nada", "email": "ana.sre@nada.com.br", "type": "User"},
+    {"login": "bia.devops_nada", "email": "bia.devops@nada.com.br", "type": "User"},
+    {"login": "github-actions[bot]", "email": "github-actions-bot@noreply.github.com", "type": "Bot"},
 ]
 
 REPOSITORIES = [
     {
-        "name": "ochb-api-cash-cambio-contatos-ext",
-        "full_name": nada/ochb-api-cash-cambio-contatos-ext",
+        "name": "arch-api-cash-cambio-contatos-ext",
+        "full_name": "nada/arch-api-cash-cambio-contatos-ext",
         "description": "[CASHHUB - OPEN CASH HUB]",
         "language": "java",
-        "topics": ["api", "cashhub", "cloud", "ochb", "oas31"],
+        "topics": ["api", "cashhub", "cloud", "oas31", "archtecture-api", "architecture-api"],
         "private": True,
         "custom_properties": {
             "api-publish": "false",
@@ -81,13 +86,16 @@ REPOSITORIES = [
             "copilot-review": "true",
         },
         "failure_bias": 0.12,
+        "requested_days_ago": 210,
+        "repo_created_days_ago": 190,
+        "pipeline_requested_days_ago": 175,
     },
     {
-        "name": "core-credit-engine",
-        "full_name": nada/core-credit-engine",
+        "name": "arch-srv-credit-engine",
+        "full_name": "nada/arch-srv-credit-engine",
         "description": "[CREDIT - CORE ENGINE]",
         "language": "java",
-        "topics": ["java", "spring-boot", "credit", "api"],
+        "topics": ["java", "spring-boot", "credit", "archtecture-srv", "architecture-srv"],
         "private": True,
         "custom_properties": {
             "api-publish": "true",
@@ -97,13 +105,16 @@ REPOSITORIES = [
             "copilot-review": "true",
         },
         "failure_bias": 0.18,
+        "requested_days_ago": 240,
+        "repo_created_days_ago": 220,
+        "pipeline_requested_days_ago": 205,
     },
     {
-        "name": "frontend-pix-web",
-        "full_name": nada/frontend-pix-web",
+        "name": "devops-bff-pix-web",
+        "full_name": "nada/devops-bff-pix-web",
         "description": "[PIX - WEB FRONTEND]",
         "language": "typescript",
-        "topics": ["frontend", "react", "pix", "web"],
+        "topics": ["frontend", "react", "pix", "web", "archtecture-bff", "architecture-bff"],
         "private": False,
         "custom_properties": {
             "api-publish": "false",
@@ -113,13 +124,16 @@ REPOSITORIES = [
             "copilot-review": "true",
         },
         "failure_bias": 0.08,
+        "requested_days_ago": 170,
+        "repo_created_days_ago": 155,
+        "pipeline_requested_days_ago": 145,
     },
     {
-        "name": "data-risk-pipeline",
-        "full_name": nada/data-risk-pipeline",
+        "name": "ia-srv-data-risk-pipeline",
+        "full_name": "nada/ia-srv-data-risk-pipeline",
         "description": "[RISK - DATA PIPELINE]",
         "language": "python",
-        "topics": ["python", "data", "risk", "etl"],
+        "topics": ["python", "data", "risk", "etl", "archtecture-srv", "architecture-srv"],
         "private": True,
         "custom_properties": {
             "api-publish": "false",
@@ -129,6 +143,66 @@ REPOSITORIES = [
             "copilot-review": "false",
         },
         "failure_bias": 0.15,
+        "requested_days_ago": 260,
+        "repo_created_days_ago": 245,
+        "pipeline_requested_days_ago": 230,
+    },
+    {
+        "name": "sre-apim-gateway-core",
+        "full_name": "nada/sre-apim-gateway-core",
+        "description": "[APIM - GATEWAY CORE]",
+        "language": "node",
+        "topics": ["node", "gateway", "apim", "archtecture-apim", "architecture-apim"],
+        "private": True,
+        "custom_properties": {
+            "api-publish": "true",
+            "registry": "npm",
+            "self-update": "true",
+            "self-update-workflows": "true",
+            "copilot-review": "true",
+        },
+        "failure_bias": 0.1,
+        "requested_days_ago": 150,
+        "repo_created_days_ago": 135,
+        "pipeline_requested_days_ago": 120,
+    },
+    {
+        "name": "devops-api-release-ops",
+        "full_name": "nada/devops-api-release-ops",
+        "description": "[DEVOPS - RELEASE OPS]",
+        "language": "node",
+        "topics": ["node", "devops", "ops", "archtecture-api", "architecture-api"],
+        "private": True,
+        "custom_properties": {
+            "api-publish": "false",
+            "registry": "npm",
+            "self-update": "true",
+            "self-update-workflows": "true",
+            "copilot-review": "true",
+        },
+        "failure_bias": 0.09,
+        "requested_days_ago": 120,
+        "repo_created_days_ago": 110,
+        "pipeline_requested_days_ago": 95,
+    },
+    {
+        "name": "sre-srv-observability",
+        "full_name": "nada/sre-srv-observability",
+        "description": "[SRE - OBSERVABILITY]",
+        "language": "python",
+        "topics": ["python", "observability", "sre", "archtecture-srv", "architecture-srv"],
+        "private": True,
+        "custom_properties": {
+            "api-publish": "false",
+            "registry": "pypi",
+            "self-update": "true",
+            "self-update-workflows": "true",
+            "copilot-review": "false",
+        },
+        "failure_bias": 0.13,
+        "requested_days_ago": 200,
+        "repo_created_days_ago": 182,
+        "pipeline_requested_days_ago": 168,
     },
 ]
 
@@ -140,6 +214,7 @@ WORKFLOWS = [
         "events": ["push", "pull_request"],
         "check_names": ["build", "compile", "unit-tests"],
         "base_duration_ms": 180_000,
+        "enablement_days_ago": 170,
     },
     {
         "name": "Axway Deploy Release",
@@ -148,6 +223,7 @@ WORKFLOWS = [
         "events": ["push", "workflow_dispatch"],
         "check_names": ["call-deploy-prd / axway-deploy", "deploy-release", "smoke-test"],
         "base_duration_ms": 420_000,
+        "enablement_days_ago": 150,
     },
     {
         "name": "Deploy Staging",
@@ -156,6 +232,7 @@ WORKFLOWS = [
         "events": ["push"],
         "check_names": ["call-deploy-hml / axway-deploy", "deploy-staging", "smoke-test"],
         "base_duration_ms": 300_000,
+        "enablement_days_ago": 155,
     },
     {
         "name": "Security Scan",
@@ -164,11 +241,39 @@ WORKFLOWS = [
         "events": ["schedule"],
         "check_names": ["dependency-scan", "sast"],
         "base_duration_ms": 240_000,
+        "enablement_days_ago": 165,
+    },
+    {
+        "name": "Rollback Production",
+        "path": ".github/workflows/rollback-prd.yaml",
+        "kind": "rollback",
+        "events": ["workflow_dispatch"],
+        "check_names": ["rollback-prd", "rollback-validation", "approval-gate"],
+        "base_duration_ms": 210_000,
+        "enablement_days_ago": 140,
+    },
+    {
+        "name": "APIM Deploy Gateway",
+        "path": ".github/workflows/apim-deploy.yaml",
+        "kind": "deploy",
+        "events": ["push", "workflow_dispatch"],
+        "check_names": ["deploy-apim-prd", "deploy-apim-hml", "smoke-test"],
+        "base_duration_ms": 360_000,
+        "enablement_days_ago": 130,
+    },
+    {
+        "name": "Node Build and Test",
+        "path": ".github/workflows/node-build.yaml",
+        "kind": "build",
+        "events": ["push", "pull_request"],
+        "check_names": ["node-build", "lint", "unit-tests", "quality-gate"],
+        "base_duration_ms": 150_000,
+        "enablement_days_ago": 160,
     },
 ]
 
 BRANCHES = ["main", "develop", "release/v2.1", "feature/pix-ui", "feature/credit-limit"]
-DEPLOY_ENVS = ["PRD", "HML", "STG"]
+DEPLOY_ENVS = ["PRD", "HML", "STG", "DEV", "SANDBOX"]
 
 
 def _iso(dt: datetime) -> str:
@@ -180,6 +285,7 @@ def _random_user() -> dict:
     return {
         "id": random.randint(100_000, 999_999_999),
         "login": base["login"],
+        "email": base["email"],
         "node_id": f"U_kgDO{uuid.uuid4().hex[:8]}",
         "site_admin": False,
         "type": base["type"],
@@ -187,9 +293,22 @@ def _random_user() -> dict:
     }
 
 
+def _ensure_repo_seed(repo: dict, now: datetime) -> None:
+    seed_now = SEED_NOW or now
+    if "_seed_created_at" in repo:
+        return
+    repo["_seed_requested_at"] = seed_now - timedelta(days=repo.get("requested_days_ago", 180), hours=2)
+    repo["_seed_created_at"] = seed_now - timedelta(days=repo.get("repo_created_days_ago", 160))
+    repo["_seed_pipeline_requested_at"] = seed_now - timedelta(days=repo.get("pipeline_requested_days_ago", 145), hours=4)
+    repo["_seed_pushed_at"] = seed_now - timedelta(hours=random.randint(1, 48))
+    repo["_seed_requester"] = random.choice([user for user in USERS if user["type"] == "User"])
+
+
 def _repository_doc(repo: dict, now: datetime) -> dict:
-    created_at = now - timedelta(days=random.randint(20, 180))
-    pushed_at = now - timedelta(hours=random.randint(1, 48))
+    _ensure_repo_seed(repo, now)
+    created_at = repo["_seed_created_at"]
+    pushed_at = repo["_seed_pushed_at"]
+    requester = repo["_seed_requester"]
     return {
         "id": random.randint(1_000_000_000, 1_999_999_999),
         "name": repo["name"],
@@ -213,6 +332,12 @@ def _repository_doc(repo: dict, now: datetime) -> dict:
             "user_view_type": "public",
         },
         "custom_properties": repo["custom_properties"],
+        "request": {
+            "requested_at": _iso(repo["_seed_requested_at"]),
+            "requester_email": requester["email"],
+            "requester_login": requester["login"],
+            "ticket": f"REQ-{random.randint(10000, 99999)}",
+        },
     }
 
 
@@ -237,9 +362,11 @@ def _deployment_state(conclusion: str) -> str:
 
 def _pick_check_name(workflow: dict, conclusion: str) -> str:
     if workflow["kind"] == "build" and conclusion in {"failure", "timed_out"}:
-        return random.choice(["build", "compile", "docker-build"])
+        return random.choice(["build", "compile", "docker-build", "quality-gate", "approval-gate"])
     if workflow["kind"] == "deploy" and conclusion in {"failure", "timed_out"}:
-        return random.choice(["call-deploy-prd / axway-deploy", "deploy-release", "deploy-staging", "smoke-test"])
+        return random.choice(["call-deploy-prd / axway-deploy", "deploy-release", "deploy-staging", "deploy-apim-prd", "smoke-test"])
+    if workflow["kind"] == "rollback":
+        return random.choice(workflow["check_names"])
     return random.choice(workflow["check_names"])
 
 
@@ -247,24 +374,56 @@ def _document_index_name(event_time: datetime) -> str:
     return f"{INDEX_PREFIX}-{event_time.strftime('%Y.%m.%d')}"
 
 
+def _workflow_reference_dates(workflow: dict, seed_now: datetime) -> tuple[datetime, datetime]:
+    created_at = seed_now - timedelta(days=workflow.get("enablement_days_ago", 150))
+    updated_at = seed_now - timedelta(days=max(1, workflow.get("enablement_days_ago", 150) - 10))
+    return created_at, updated_at
+
+
+def _pick_valid_repo_and_workflow(event_time: datetime) -> tuple[dict, dict]:
+    seed_now = SEED_NOW or event_time
+    valid_pairs = []
+    for repo in REPOSITORIES:
+        _ensure_repo_seed(repo, seed_now)
+        if event_time < repo["_seed_created_at"]:
+            continue
+        for workflow in WORKFLOWS:
+            workflow_created_at, _ = _workflow_reference_dates(workflow, seed_now)
+            available_from = max(repo["_seed_pipeline_requested_at"], workflow_created_at)
+            if event_time >= available_from:
+                valid_pairs.append((repo, workflow))
+    if not valid_pairs:
+        fallback_repo = random.choice(REPOSITORIES)
+        _ensure_repo_seed(fallback_repo, seed_now)
+        return fallback_repo, random.choice(WORKFLOWS)
+    return random.choice(valid_pairs)
+
+
 def generate_document(run_number: int, event_time: datetime) -> dict:
-    repo = random.choice(REPOSITORIES)
-    workflow = random.choice(WORKFLOWS)
+    repo, workflow = _pick_valid_repo_and_workflow(event_time)
     sender = _random_user()
     actor = _random_user()
     branch = random.choice(BRANCHES)
     event = random.choice(workflow["events"])
     conclusion = _workflow_conclusion(workflow, repo)
     check_name = _pick_check_name(workflow, conclusion)
+    pending_approval = workflow["kind"] in {"deploy", "rollback"} and random.random() < 0.06
 
     run_started_at = event_time - timedelta(minutes=random.randint(1, 30))
     workflow_updated_at = run_started_at + timedelta(milliseconds=int(workflow["base_duration_ms"] * random.uniform(0.8, 1.4)))
     check_started_at = run_started_at + timedelta(seconds=random.randint(5, 60))
     check_completed_at = workflow_updated_at - timedelta(seconds=random.randint(5, 45))
 
-    workflow_status = "completed" if conclusion in {"success", "failure", "timed_out", "cancelled"} else "in_progress"
-    check_conclusion = "success" if conclusion == "success" else random.choice(["failure", "failure", "timed_out", "cancelled"])
-    check_status = "completed"
+    if pending_approval:
+        workflow_status = "in_progress"
+        conclusion = None
+        check_status = "waiting"
+        check_conclusion = None
+        check_completed_at = None
+    else:
+        workflow_status = "completed" if conclusion in {"success", "failure", "timed_out", "cancelled"} else "in_progress"
+        check_conclusion = "success" if conclusion == "success" else random.choice(["failure", "failure", "timed_out", "cancelled"])
+        check_status = "completed"
 
     doc = {
         "_index": _document_index_name(event_time),
@@ -281,8 +440,8 @@ def generate_document(run_number: int, event_time: datetime) -> dict:
                 "name": workflow["name"],
                 "path": workflow["path"],
                 "state": "active",
-                "created_at": _iso(event_time - timedelta(days=random.randint(10, 100))),
-                "updated_at": _iso(event_time - timedelta(days=random.randint(1, 9))),
+                "created_at": _iso(_workflow_reference_dates(workflow, SEED_NOW or event_time)[0]),
+                "updated_at": _iso(_workflow_reference_dates(workflow, SEED_NOW or event_time)[1]),
             },
             "workflow_run": {
                 "id": str(random.randint(20_000_000_000, 29_999_999_999)),
@@ -311,17 +470,24 @@ def generate_document(run_number: int, event_time: datetime) -> dict:
                 "status": check_status,
                 "conclusion": check_conclusion,
                 "started_at": _iso(check_started_at),
-                "completed_at": _iso(check_completed_at),
+                "completed_at": _iso(check_completed_at) if check_completed_at else None,
             },
         },
     }
 
-    if workflow["kind"] == "deploy":
+    doc["_source"]["pipeline_enablement"] = {
+        "requested_at": _iso(repo["_seed_pipeline_requested_at"]),
+        "requester_email": repo["_seed_requester"]["email"],
+        "requester_login": repo["_seed_requester"]["login"],
+        "ticket": f"PIPE-{random.randint(10000, 99999)}",
+    }
+
+    if workflow["kind"] in {"deploy", "rollback"}:
         env = random.choice(DEPLOY_ENVS)
         deployment_created_at = run_started_at + timedelta(seconds=20)
         deployment_updated_at = workflow_updated_at
         deployment_status_created_at = deployment_updated_at - timedelta(seconds=15)
-        deployment_state = _deployment_state(conclusion)
+        deployment_state = "waiting" if pending_approval else _deployment_state(conclusion)
 
         doc["_source"]["deployment"] = {
             "id": random.randint(4_000_000_000, 4_999_999_999),
@@ -329,7 +495,7 @@ def generate_document(run_number: int, event_time: datetime) -> dict:
             "original_environment": env,
             "production_environment": env == "PRD",
             "transient_environment": False,
-            "task": "deploy",
+            "task": "rollback" if workflow["kind"] == "rollback" else "deploy",
             "ref": branch,
             "sha": doc["_source"]["workflow_run"]["head_sha"],
             "url": f"https://api.github.com/repos/{repo['full_name']}/deployments/{random.randint(4_000_000_000, 4_999_999_999)}",
@@ -354,10 +520,12 @@ def generate_document(run_number: int, event_time: datetime) -> dict:
 
 
 def main():
+    global SEED_NOW
     es = Elasticsearch(
         ES_URL,
         basic_auth=(ES_USER, ES_PASSWORD),
         verify_certs=False,
+        request_timeout=ES_REQUEST_TIMEOUT,
     )
 
     print(f"📡 Conectando ao Elasticsearch em {ES_URL}...")
@@ -365,6 +533,9 @@ def main():
     print(f"✅ Conectado — Elasticsearch {info['version']['number']}")
 
     now = datetime.now(timezone.utc)
+    SEED_NOW = now
+    for repo in REPOSITORIES:
+        _ensure_repo_seed(repo, now)
     documents = []
 
     print(f"🔧 Gerando {TARGET_DOCS} documentos em indices {INDEX_PREFIX}-YYYY.MM.DD ...")
@@ -380,8 +551,9 @@ def main():
         es,
         documents,
         raise_on_error=False,
-        chunk_size=100,
+        chunk_size=50,
         refresh="wait_for",
+        request_timeout=ES_REQUEST_TIMEOUT,
     )
 
     print("")

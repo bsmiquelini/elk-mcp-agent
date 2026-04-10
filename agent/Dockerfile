@@ -5,6 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+EXPOSE 8787
+
 COPY agent/requirements.txt /tmp/agent-requirements.txt
 COPY mcp_server/requirements.txt /tmp/mcp-requirements.txt
 COPY scripts/requirements-seed.txt /tmp/seed-requirements.txt

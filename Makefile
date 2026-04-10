@@ -1,4 +1,4 @@
-.PHONY: deps bootstrap setup seed reset-data doctor run-agent run-agent-docker run-mcp-docker smoke-test smoke-test-docker bake-build bake-push stop clean logs status
+.PHONY: deps bootstrap setup seed reset-data doctor run-agent run-service run-agent-docker run-mcp-docker smoke-test smoke-test-docker ui-test provider-test service-test director-report full-validated bake-build bake-push stop clean logs status
 
 deps:
 	bash scripts/install_deps.sh
@@ -21,6 +21,9 @@ doctor:
 run-agent:
 	python3 agent/main.py
 
+run-service:
+	python3 agent/http_service.py
+
 run-agent-docker:
 	docker compose --profile app run --rm agent
 
@@ -32,6 +35,21 @@ smoke-test:
 
 smoke-test-docker:
 	docker compose --profile app run --rm agent scripts/test_mvp_queries.py
+
+ui-test:
+	python3 scripts/test_ui_rendering.py
+
+provider-test:
+	python3 scripts/test_llm_provider_gateway.py
+
+service-test:
+	python3 scripts/test_http_service.py
+
+full-validated:
+	python3 scripts/test_full_300_validated.py
+
+director-report:
+	python3 scripts/generate_director_report.py --prompt "Quero um resumo executivo de CI/CD com foco em risco operacional, sucesso em PRD, lead time e aprovacoes pendentes"
 
 bake-build:
 	docker buildx bake -f deploy/docker-bake.hcl images

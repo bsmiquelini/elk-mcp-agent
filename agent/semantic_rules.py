@@ -42,11 +42,25 @@ def extract_architecture_filter(question: str, config: dict, topic_field: str | 
 
     q = plain_text(question)
     rules = get_rules(config).get("architecture", {})
+    known_values = {plain_text(value) for value in rules.get("known_values", [])}
     aliases = [plain_text(alias) for alias in rules.get("aliases", ["arquitetura", "arquiteturas", "architecture", "architectures"])]
-    if not any(alias in q for alias in aliases):
-        return {}, []
-
-    value = _extract_named_value(q, aliases)
+    value = _extract_named_value(q, aliases) if _contains_alias(q, aliases) else None
+    if value and known_values and value not in known_values:
+        value = None
+    if not value:
+        implicit_matches = re.findall(
+            r"(?:esteiras?|workflows?|pipelines?|repositorios?|repos?)\s+(?:de|do|da|dos|das)\s+([a-z0-9_-]+)",
+            q,
+        )
+        for candidate in implicit_matches:
+            if candidate in (known_values or {"api", "srv", "bff", "apim"}):
+                value = candidate
+                break
+    if not value:
+        for candidate in list(known_values or {"apim", "api", "srv", "bff"}):
+            if re.search(rf"\b{re.escape(candidate)}\b", q) and _contains_alias(q, aliases):
+                value = candidate
+                break
     if not value:
         return {}, []
 
@@ -79,7 +93,7 @@ def extract_environment_semantics(question: str, config: dict, profile: dict) ->
     matched_rule = None
     for key, rule in rules.items():
         aliases = [plain_text(alias) for alias in rule.get("aliases", [])]
-        if any(alias in q for alias in aliases):
+        if _contains_alias(q, aliases):
             matched_key = key
             matched_rule = rule
             break
@@ -92,6 +106,11 @@ def extract_environment_semantics(question: str, config: dict, profile: dict) ->
 
     exact_values = matched_rule.get("exact_values", [])
     contains_tokens = matched_rule.get("contains_tokens", [])
+    resolved_env_field = profile.get("environment_field")
+    if resolved_env_field and exact_values:
+        filters[resolved_env_field] = exact_values
+        return filters, any_filters, labels
+
     for field_name in matched_rule.get("field_preferences", []):
         resolved_field = profile.get(field_name) if field_name.endswith("_field") else field_name
         if not resolved_field:
@@ -114,12 +133,25 @@ def _wildcards_for_tokens(tokens: list[str]) -> list[str]:
 
 
 def _extract_named_value(question: str, aliases: list[str]) -> str | None:
+    stopwords = {
+        "que", "ja", "já", "executaram", "executou", "rodaram", "rodou", "tiveram", "teve",
+        "mais", "menos", "maior", "menor", "ultimo", "ultimos", "ultima", "ultimas",
+        "falharam", "falhou", "sucesso", "deploy", "build", "workflow", "workflows",
+        "esteira", "esteiras", "pipeline", "pipelines", "trabalham", "trabalha", "trabalhando",
+        "entrega", "entrega", "primeiro", "primeira", "ultima", "última",
+    }
     for alias in aliases:
         pattern = rf"{re.escape(alias)}(?:\s+de|\s+do|\s+da|\s+dos|\s+das)?\s+([a-z0-9_-]+)"
         match = re.search(pattern, question)
         if match:
-            return match.group(1)
+            candidate = match.group(1)
+            if candidate not in stopwords:
+                return candidate
     return None
+
+
+def _contains_alias(question: str, aliases: list[str]) -> bool:
+    return any(re.search(rf"(?<![a-z0-9_-]){re.escape(alias)}(?![a-z0-9_-])", question) for alias in aliases)
 
 
 def _dedupe(values: list[str]) -> list[str]:

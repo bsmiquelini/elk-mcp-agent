@@ -87,6 +87,7 @@ def _apply_environment_overrides(config: dict) -> dict:
         ("agent", "model"): os.getenv("OLLAMA_MODEL"),
         ("agent", "ollama_model"): os.getenv("OLLAMA_MODEL"),
         ("agent", "api_key"): os.getenv("GROQ_API_KEY"),
+        ("agent", "model"): os.getenv("LLM_MODEL"),
     }
 
     for (section, key), value in env_map.items():
@@ -104,6 +105,20 @@ def _apply_environment_overrides(config: dict) -> dict:
     ollama_timeout = os.getenv("OLLAMA_TIMEOUT")
     if ollama_timeout:
         agent_cfg["ollama_timeout"] = int(ollama_timeout)
+
+    openai_cfg = agent_cfg.setdefault("openai_compatible", {})
+    if os.getenv("LLM_API_BASE"):
+        openai_cfg["api_base"] = os.getenv("LLM_API_BASE")
+    if os.getenv("LLM_API_KEY"):
+        openai_cfg["api_key"] = os.getenv("LLM_API_KEY")
+    if os.getenv("LLM_MODEL"):
+        openai_cfg["model"] = os.getenv("LLM_MODEL")
+    if os.getenv("LLM_TIMEOUT"):
+        openai_cfg["timeout"] = int(os.getenv("LLM_TIMEOUT"))
+    if os.getenv("LLM_AUTH_HEADER"):
+        openai_cfg["auth_header"] = os.getenv("LLM_AUTH_HEADER")
+    if os.getenv("LLM_AUTH_SCHEME") is not None:
+        openai_cfg["auth_scheme"] = os.getenv("LLM_AUTH_SCHEME")
 
     return config
 

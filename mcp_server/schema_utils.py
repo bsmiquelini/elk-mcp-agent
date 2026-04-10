@@ -302,6 +302,14 @@ def infer_schema_profile(fields: dict) -> dict:
                 "workflow_run.triggering_actor.login",
             ],
         ),
+        "actor_email_field": _pick_first(
+            fields,
+            [
+                "sender.email",
+                "workflow_run.actor.email",
+                "workflow_run.triggering_actor.email",
+            ],
+        ),
         "actor_type_field": _pick_first(
             fields,
             [
@@ -315,6 +323,49 @@ def infer_schema_profile(fields: dict) -> dict:
             [
                 "workflow_run.run_started_at",
                 "workflow_run.created_at",
+            ],
+        ),
+        "repository_request_date_field": _pick_first(
+            fields,
+            [
+                "repository.request.requested_at",
+            ],
+        ),
+        "repository_requester_email_field": _pick_first(
+            fields,
+            [
+                "repository.request.requester_email",
+            ],
+        ),
+        "repository_created_field": _pick_first(
+            fields,
+            [
+                "repository.created_at",
+            ],
+        ),
+        "pipeline_request_date_field": _pick_first(
+            fields,
+            [
+                "pipeline_enablement.requested_at",
+            ],
+        ),
+        "pipeline_requester_email_field": _pick_first(
+            fields,
+            [
+                "pipeline_enablement.requester_email",
+            ],
+        ),
+        "workflow_created_field": _pick_first(
+            fields,
+            [
+                "workflow.created_at",
+            ],
+        ),
+        "deployment_execution_id_field": _pick_first(
+            fields,
+            [
+                "deployment.id",
+                "deployment_status.id",
             ],
         ),
         "branch_field": _pick_first(

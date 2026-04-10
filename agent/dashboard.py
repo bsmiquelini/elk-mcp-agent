@@ -10,6 +10,8 @@ from pathlib import Path
 import json
 import re
 
+from ui_theme import css_variables, custom_css, favicon_href, get_ui_theme, logo_src, page_background_css, panel_background_css
+
 
 def slugify(value: str) -> str:
     text = value.lower().strip()
@@ -28,21 +30,30 @@ def save_dashboard_html(config: dict, question: str, answer: str, dashboard: dic
     specific_path = output_dir / f"{dashboard_id}.html"
     latest_path = output_dir / "last_dashboard.html"
 
-    html = render_dashboard_html(question, answer, dashboard)
+    html = render_dashboard_html(question, answer, dashboard, config=config)
     specific_path.write_text(html, encoding="utf-8")
     latest_path.write_text(html, encoding="utf-8")
     return specific_path
 
 
-def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
+def render_dashboard_html(question: str, answer: str, dashboard: dict, config: dict | None = None) -> str:
+    ui_theme = get_ui_theme(config or {})
+    branding = ui_theme.get("branding", {})
     title = dashboard.get("title") or question
     cards = dashboard.get("cards", [])
     sections = dashboard.get("sections", [])
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    favicon = favicon_href(ui_theme)
+    logo = logo_src(ui_theme)
+    brand_badge = escape(str(branding.get("header_badge", "CI/CD Intelligence")))
+    product_name = escape(str(branding.get("product_name", "GitHub Workflow Intelligence")))
+    custom_css_text = custom_css(ui_theme)
 
     cards_html = "".join(render_card(card) for card in cards)
     sections_html = "".join(render_section(section) for section in sections)
     raw_json = escape(json.dumps(dashboard, ensure_ascii=False, indent=2))
+    logo_html = f'<img class="brand-logo" src="{logo}" alt="Logo">' if logo else ""
+    favicon_html = f'<link rel="icon" href="{favicon}">' if favicon else ""
 
     return f"""<!doctype html>
 <html lang="pt-BR">
@@ -50,28 +61,16 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{escape(title)}</title>
+  {favicon_html}
   <style>
     :root {{
-      --bg: #f5f2ea;
-      --panel: #fffdf8;
-      --ink: #182028;
-      --muted: #5f6b76;
-      --line: #dfd6c6;
-      --accent: #174c4f;
-      --accent-2: #c46a2d;
-      --success: #1f7a45;
-      --warning: #a45b11;
-      --danger: #b23a2b;
-      --shadow: 0 18px 40px rgba(24, 32, 40, 0.08);
+{css_variables(ui_theme)}
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(196, 106, 45, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(23, 76, 79, 0.18), transparent 24%),
-        var(--bg);
+      {page_background_css(ui_theme)}
       color: var(--ink);
     }}
     .wrap {{
@@ -80,11 +79,43 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
       padding: 32px 20px 48px;
     }}
     .hero {{
-      background: linear-gradient(135deg, rgba(23,76,79,0.96), rgba(29,54,65,0.94));
+      background: linear-gradient(135deg, var(--hero-from), var(--hero-to));
       color: #f8f4ea;
       border-radius: 28px;
       padding: 28px;
       box-shadow: var(--shadow);
+    }}
+    .hero-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }}
+    .brand-lockup {{
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }}
+    .brand-logo {{
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      object-fit: contain;
+      background: rgba(255,255,255,0.1);
+      padding: 8px;
+      border: 1px solid rgba(255,255,255,0.18);
+    }}
+    .brand-badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      padding: 8px 14px;
+      background: rgba(255,255,255,0.12);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }}
     .eyebrow {{
       font-size: 12px;
@@ -115,7 +146,7 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
       margin-top: 24px;
     }}
     .card, .section {{
-      background: var(--panel);
+      {panel_background_css(ui_theme)}
       border: 1px solid var(--line);
       border-radius: 22px;
       box-shadow: var(--shadow);
@@ -157,6 +188,27 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
       color: var(--muted);
       line-height: 1.6;
     }}
+    .rich-text p {{
+      color: var(--muted);
+      line-height: 1.7;
+      margin: 0 0 10px;
+    }}
+    .rich-text ul {{
+      margin: 8px 0 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+      line-height: 1.7;
+    }}
+    .rich-text code, .subtitle code, td code, .kv-item code {{
+      background: rgba(23, 76, 79, 0.08);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 0.95em;
+    }}
+    .rich-text strong, .subtitle strong, td strong, .kv-item strong {{
+      color: var(--ink);
+    }}
     .bar-list {{
       display: grid;
       gap: 12px;
@@ -195,6 +247,28 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 12px;
     }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+    }}
+    th, td {{
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+      line-height: 1.55;
+    }}
+    th {{
+      background: rgba(23, 76, 79, 0.08);
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 12px;
+    }}
     .kv-item {{
       padding: 14px;
       border-radius: 16px;
@@ -224,6 +298,9 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
       line-height: 1.5;
     }}
     @media (max-width: 720px) {{
+      .hero-top {{
+        align-items: flex-start;
+      }}
       .bar-row {{
         grid-template-columns: 1fr;
       }}
@@ -231,14 +308,23 @@ def render_dashboard_html(question: str, answer: str, dashboard: dict) -> str:
         text-align: left;
       }}
     }}
+{custom_css_text}
   </style>
 </head>
 <body>
   <div class="wrap">
     <section class="hero">
-      <div class="eyebrow">GitHub Workflow Intelligence</div>
+      <div class="hero-top">
+        <div class="brand-lockup">
+          {logo_html}
+          <div>
+            <div class="eyebrow">{product_name}</div>
+            <div class="brand-badge">{brand_badge}</div>
+          </div>
+        </div>
+      </div>
       <h1>{escape(title)}</h1>
-      <div class="subtitle"><strong>Pergunta:</strong> {escape(question)}<br><strong>Resposta:</strong> {escape(answer)}</div>
+      <div class="subtitle"><strong>Pergunta:</strong> {escape(question)}<br><strong>Resposta:</strong> {render_rich_text(answer)}</div>
       <div class="meta">Gerado em {escape(generated_at)}</div>
     </section>
 
@@ -292,13 +378,21 @@ def render_section(section: dict) -> str:
             f"</section>"
         )
 
-    text = escape(str(section.get("text", "")))
-    return f'<section class="section"><h2>{title}</h2><p>{text}</p></section>'
+    if section_type == "table":
+        columns = section.get("columns", [])
+        rows = section.get("rows", [])
+        return (
+            f'<section class="section"><h2>{title}</h2>'
+            f'{render_table(columns, rows)}</section>'
+        )
+
+    text = render_rich_text(str(section.get("text", "")))
+    return f'<section class="section"><h2>{title}</h2><div class="rich-text">{text}</div></section>'
 
 
 def render_kv_item(item: dict) -> str:
     key = escape(str(item.get("key", "")))
-    value = escape(str(item.get("value", "")))
+    value = render_rich_text(str(item.get("value", "")))
     return f'<div class="kv-item"><div class="k">{key}</div><div class="v">{value}</div></div>'
 
 
@@ -319,3 +413,65 @@ def render_bar_list(series: list[dict]) -> str:
             "</div>"
         )
     return f'<div class="bar-list">{"".join(rows)}</div>'
+
+
+def render_table(columns: list[dict], rows: list[dict]) -> str:
+    headers = "".join(f"<th>{escape(str(column.get('label', '')))}</th>" for column in columns)
+    body_rows = []
+    for row in rows:
+        cells = []
+        for column in columns:
+            key = column.get("key")
+            cells.append(f"<td>{render_rich_text(str(row.get(key, '')))}</td>")
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+    return f"<table><thead><tr>{headers}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
+
+
+def render_rich_text(text: str) -> str:
+    lines = [line.rstrip() for line in str(text or "").splitlines()]
+    if any(line.lstrip().startswith("- ") for line in lines):
+        blocks = []
+        paragraph = []
+        items = []
+
+        def flush_paragraph():
+            if paragraph:
+                blocks.append(f"<p>{_render_inline(' '.join(part.strip() for part in paragraph if part.strip()))}</p>")
+                paragraph.clear()
+
+        def flush_items():
+            if items:
+                blocks.append("<ul>" + "".join(f"<li>{_render_inline(item)}</li>" for item in items) + "</ul>")
+                items.clear()
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                flush_paragraph()
+                flush_items()
+                continue
+            if stripped.startswith("- "):
+                flush_paragraph()
+                items.append(stripped[2:].strip())
+            else:
+                flush_items()
+                paragraph.append(stripped)
+
+        flush_paragraph()
+        flush_items()
+        return "".join(blocks)
+
+    paragraphs = [segment.strip() for segment in "\n".join(lines).split("\n\n") if segment.strip()]
+    if not paragraphs:
+        return ""
+    return "".join(
+        f"<p>{'<br>'.join(_render_inline(part.strip()) for part in paragraph.splitlines() if part.strip())}</p>"
+        for paragraph in paragraphs
+    )
+
+
+def _render_inline(text: str) -> str:
+    escaped = escape(text)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    return escaped

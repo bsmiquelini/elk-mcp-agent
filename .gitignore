@@ -1,2 +1,13 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
-artifact*
+artifacts/
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*.bkp
+*bkp
+.env
+.env.*
+deploy/k8s/secret.yaml
+deploy/k8s/secret.*.yaml
+*.log
+infra/nginx/certs/
