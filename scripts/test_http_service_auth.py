@@ -1,5 +1,5 @@
 """
-Smoke test da API HTTP interna do agente.
+Valida a API HTTP com autenticacao bearer.
 """
 
 from __future__ import annotations
@@ -36,21 +36,25 @@ def wait_health(url: str, timeout: float = 20.0):
     raise RuntimeError("HTTP service nao ficou pronto a tempo")
 
 
-def post_json(url: str, payload: dict) -> dict:
-    data = json.dumps(payload).encode("utf-8")
+def post(url: str, payload: dict, headers: dict | None = None):
     req = urllib.request.Request(
         url,
-        data=data,
-        headers={"Content-Type": "application/json"},
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
 def main():
     port = free_port()
     env = os.environ.copy()
+    env["AGENT_HTTP_AUTH_ENABLED"] = "true"
+    env["AGENT_HTTP_BEARER_TOKEN"] = "test-token"
     proc = subprocess.Popen(
         ["python3", "agent/http_service.py", "--host", "127.0.0.1", "--port", str(port)],
         cwd=ROOT,
@@ -61,28 +65,24 @@ def main():
     )
 
     try:
-        health = wait_health(f"http://127.0.0.1:{port}/healthz")
-        if health.get("status") != "ok":
-            raise RuntimeError(f"Healthcheck invalido: {health}")
+        wait_health(f"http://127.0.0.1:{port}/healthz")
 
-        response = post_json(
+        status, payload = post(
             f"http://127.0.0.1:{port}/v1/ask",
             {"question": "Qual foi o ultimo workflow que falhou em produção?"},
         )
-        answer = str(response.get("answer") or "").strip()
-        if not answer or not response.get("request_id"):
-            raise RuntimeError(f"Resposta vazia: {response}")
+        if status != 401:
+            raise RuntimeError(f"Esperava 401 sem token, recebi {status}: {payload}")
 
-        second = post_json(
+        status, payload = post(
             f"http://127.0.0.1:{port}/v1/ask",
             {"question": "Qual foi o ultimo workflow que falhou em produção?"},
+            headers={"Authorization": "Bearer test-token"},
         )
-        if not str(second.get("answer") or "").strip():
-            raise RuntimeError(f"Segunda resposta vazia: {second}")
-        if "latency_ms" not in second:
-            raise RuntimeError(f"latency_ms ausente: {second}")
+        if status != 200 or not str(payload.get("answer") or "").strip():
+            raise RuntimeError(f"Resposta invalida com token: {status} {payload}")
 
-        print("OK: API HTTP respondeu com healthcheck e duas respostas de negocio.")
+        print("OK: API HTTP protegeu o endpoint e respondeu com bearer token.")
     finally:
         proc.terminate()
         try:

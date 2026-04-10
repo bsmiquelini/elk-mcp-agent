@@ -232,6 +232,15 @@ agent:
     host: "0.0.0.0"
     port: 8787
     request_timeout_seconds: 180
+    json_logs: true
+    log_level: "INFO"
+    auth:
+      enabled: false
+      header_name: "Authorization"
+      bearer_token: ""
+
+  runtime:
+    schema_cache_ttl_seconds: 300
 
 ui:
   branding:

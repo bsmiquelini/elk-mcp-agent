@@ -94,10 +94,29 @@ Endpoints:
 - `GET /healthz`
 - `POST /v1/ask`
 
+Configurações importantes em [config.yaml](/home/bruno/lab_ia/elk-mcp-agent/config.yaml):
+- `agent.service.auth.enabled`
+- `agent.service.auth.bearer_token`
+- `agent.service.json_logs`
+- `agent.runtime.schema_cache_ttl_seconds`
+
 Exemplo:
 
 ```bash
 curl -s http://localhost:8787/v1/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Qual foi o ultimo workflow que falhou em produção?"}'
+```
+
+Exemplo com autenticação bearer:
+
+```bash
+export AGENT_HTTP_AUTH_ENABLED=true
+export AGENT_HTTP_BEARER_TOKEN=troque-este-token
+python3 agent/http_service.py
+
+curl -s http://localhost:8787/v1/ask \
+  -H 'Authorization: Bearer troque-este-token' \
   -H 'Content-Type: application/json' \
   -d '{"question":"Qual foi o ultimo workflow que falhou em produção?"}'
 ```
@@ -133,6 +152,9 @@ OLLAMA_API_BASE=http://127.0.0.1:11435 python3 scripts/test_full_300_validated.p
 
 # Smoke da API HTTP interna
 python3 scripts/test_http_service.py
+
+# Smoke da API HTTP com auth bearer
+python3 scripts/test_http_service_auth.py
 ```
 
 ## 📈 Relatório executivo

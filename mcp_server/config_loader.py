@@ -120,6 +120,30 @@ def _apply_environment_overrides(config: dict) -> dict:
     if os.getenv("LLM_AUTH_SCHEME") is not None:
         openai_cfg["auth_scheme"] = os.getenv("LLM_AUTH_SCHEME")
 
+    service_cfg = agent_cfg.setdefault("service", {})
+    if os.getenv("AGENT_HTTP_HOST"):
+        service_cfg["host"] = os.getenv("AGENT_HTTP_HOST")
+    if os.getenv("AGENT_HTTP_PORT"):
+        service_cfg["port"] = int(os.getenv("AGENT_HTTP_PORT"))
+    if os.getenv("AGENT_HTTP_REQUEST_TIMEOUT"):
+        service_cfg["request_timeout_seconds"] = int(os.getenv("AGENT_HTTP_REQUEST_TIMEOUT"))
+    if os.getenv("AGENT_HTTP_JSON_LOGS") is not None:
+        service_cfg["json_logs"] = os.getenv("AGENT_HTTP_JSON_LOGS").strip().lower() in {"1", "true", "yes", "on"}
+    if os.getenv("AGENT_HTTP_LOG_LEVEL"):
+        service_cfg["log_level"] = os.getenv("AGENT_HTTP_LOG_LEVEL")
+
+    auth_cfg = service_cfg.setdefault("auth", {})
+    if os.getenv("AGENT_HTTP_AUTH_ENABLED") is not None:
+        auth_cfg["enabled"] = os.getenv("AGENT_HTTP_AUTH_ENABLED").strip().lower() in {"1", "true", "yes", "on"}
+    if os.getenv("AGENT_HTTP_AUTH_HEADER"):
+        auth_cfg["header_name"] = os.getenv("AGENT_HTTP_AUTH_HEADER")
+    if os.getenv("AGENT_HTTP_BEARER_TOKEN") is not None:
+        auth_cfg["bearer_token"] = os.getenv("AGENT_HTTP_BEARER_TOKEN")
+
+    runtime_cfg = agent_cfg.setdefault("runtime", {})
+    if os.getenv("AGENT_SCHEMA_CACHE_TTL_SECONDS"):
+        runtime_cfg["schema_cache_ttl_seconds"] = int(os.getenv("AGENT_SCHEMA_CACHE_TTL_SECONDS"))
+
     return config
 
 

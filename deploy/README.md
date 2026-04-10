@@ -131,3 +131,10 @@ docker run --rm -p 8787:8787 \
   <imagem-agent> \
   agent/http_service.py --host 0.0.0.0 --port 8787
 ```
+
+Recursos operacionais recomendados:
+
+- autenticação bearer via `AGENT_HTTP_AUTH_ENABLED=true`
+- logs JSON via `AGENT_HTTP_JSON_LOGS=true`
+- cache de schema via `AGENT_SCHEMA_CACHE_TTL_SECONDS=300`
+- provider corporativo via `AGENT_PROVIDER=openai_compatible`

@@ -83,6 +83,11 @@ Use `Ollama` apenas para:
   - API HTTP inicial entregue em `agent/http_service.py`
   - endpoint `POST /v1/ask`
   - endpoint `GET /healthz`
+- melhorias já aplicadas nesta fase:
+  - autenticação bearer opcional no serviço HTTP
+  - logs JSON estruturados por request
+  - runtime persistente na API para reduzir overhead por chamada
+  - cache de schema com TTL configurável
 - desacoplar o relatório executivo da CLI via chamada interna
 - transformar o MCP em serviço remoto opcional
 - suportar multiusuário e sessões persistidas

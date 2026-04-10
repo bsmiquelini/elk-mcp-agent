@@ -1,4 +1,4 @@
-.PHONY: deps bootstrap setup seed reset-data doctor run-agent run-service run-agent-docker run-mcp-docker smoke-test smoke-test-docker ui-test provider-test service-test director-report full-validated bake-build bake-push stop clean logs status
+.PHONY: deps bootstrap setup seed reset-data doctor run-agent run-service run-agent-docker run-mcp-docker smoke-test smoke-test-docker ui-test provider-test service-test service-auth-test director-report full-validated bake-build bake-push stop clean logs status
 
 deps:
 	bash scripts/install_deps.sh
@@ -44,6 +44,9 @@ provider-test:
 
 service-test:
 	python3 scripts/test_http_service.py
+
+service-auth-test:
+	python3 scripts/test_http_service_auth.py
 
 full-validated:
 	python3 scripts/test_full_300_validated.py

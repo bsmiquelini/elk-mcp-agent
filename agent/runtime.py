@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from core import build_tools_spec, run_turn, startup
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config.yaml"
+_SCHEMA_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 class AgentRuntime:
@@ -65,6 +67,35 @@ def build_server_params() -> StdioServerParameters:
     )
 
 
+def _schema_cache_key(config_path: str | None) -> str:
+    return str(Path(config_path) if config_path else CONFIG_PATH)
+
+
+def _load_cached_schema(config: dict, config_path: str | None) -> dict | None:
+    cache_cfg = config.get("agent", {}).get("runtime", {})
+    ttl = int(cache_cfg.get("schema_cache_ttl_seconds", 300) or 0)
+    if ttl <= 0:
+        return None
+
+    cached = _SCHEMA_CACHE.get(_schema_cache_key(config_path))
+    if not cached:
+        return None
+
+    expires_at, schema = cached
+    if expires_at < time.time():
+        _SCHEMA_CACHE.pop(_schema_cache_key(config_path), None)
+        return None
+    return schema
+
+
+def _store_cached_schema(config: dict, config_path: str | None, schema: dict):
+    cache_cfg = config.get("agent", {}).get("runtime", {})
+    ttl = int(cache_cfg.get("schema_cache_ttl_seconds", 300) or 0)
+    if ttl <= 0:
+        return
+    _SCHEMA_CACHE[_schema_cache_key(config_path)] = (time.time() + ttl, schema)
+
+
 @asynccontextmanager
 async def open_agent_runtime(config_path: str | None = None):
     loaded_config = load_config(str(Path(config_path) if config_path else CONFIG_PATH))
@@ -77,7 +108,10 @@ async def open_agent_runtime(config_path: str | None = None):
             await mcp_session.initialize()
             mcp_tools = await mcp_session.list_tools()
             tools_spec = build_tools_spec(mcp_tools.tools)
-            schema = await startup(mcp_session)
+            schema = _load_cached_schema(loaded_config, config_path)
+            if schema is None:
+                schema = await startup(mcp_session)
+                _store_cached_schema(loaded_config, config_path, schema)
             if "error" in schema:
                 raise RuntimeError(f"Erro ao carregar schema: {schema['error']}")
             yield AgentRuntime(loaded_config, mcp_session, tools_spec, schema)
