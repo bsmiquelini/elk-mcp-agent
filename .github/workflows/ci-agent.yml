@@ -1,0 +1,165 @@
+name: Agent CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - ".github/workflows/ci-agent.yml"
+      - "agent/**"
+      - "mcp_server/**"
+      - "scripts/**"
+      - "config.yaml"
+      - ".env.example"
+      - "README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/ci-agent.yml"
+      - "agent/**"
+      - "mcp_server/**"
+      - "scripts/**"
+      - "config.yaml"
+      - ".env.example"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-fast:
+    name: Unit and Rendering
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            agent/requirements.txt
+            mcp_server/requirements.txt
+            scripts/requirements-seed.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r agent/requirements.txt -r mcp_server/requirements.txt -r scripts/requirements-seed.txt
+
+      - name: Compile Python sources
+        run: python3 -m compileall agent mcp_server scripts
+
+      - name: Validate provider gateway adapter
+        run: python3 scripts/test_llm_provider_gateway.py
+
+      - name: Validate UI rendering
+        run: python3 scripts/test_ui_rendering.py
+
+  integration-elasticsearch:
+    name: Integration with Elasticsearch
+    runs-on: ubuntu-latest
+    needs: unit-fast
+
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "true"
+          ELASTIC_PASSWORD: changeme123
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
+        ports:
+          - 9200:9200
+
+    env:
+      ELASTICSEARCH_URL: http://localhost:9200
+      ELASTICSEARCH_USERNAME: elastic
+      ELASTIC_PASSWORD: changeme123
+      ELASTICSEARCH_INDEX: github-workflows*
+      ELASTICSEARCH_VERIFY_SSL: "false"
+      ELASTICSEARCH_TIMEOUT: "60"
+      KIBANA_SYSTEM_PASSWORD: changeme456
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            agent/requirements.txt
+            mcp_server/requirements.txt
+            scripts/requirements-seed.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r agent/requirements.txt -r mcp_server/requirements.txt -r scripts/requirements-seed.txt
+
+      - name: Wait for Elasticsearch
+        run: |
+          for attempt in $(seq 1 40); do
+            if curl -s -u "elastic:${ELASTIC_PASSWORD}" http://localhost:9200/_cluster/health | grep -q '"status":"green"\|"status":"yellow"'; then
+              echo "Elasticsearch is ready"
+              exit 0
+            fi
+            echo "Waiting for Elasticsearch (${attempt}/40)"
+            sleep 5
+          done
+          echo "Elasticsearch did not become ready in time"
+          exit 1
+
+      - name: Create github-workflows index template
+        run: |
+          curl -s -X PUT \
+            -u "elastic:${ELASTIC_PASSWORD}" \
+            -H "Content-Type: application/json" \
+            http://localhost:9200/_index_template/github-workflows-template \
+            -d '{
+              "index_patterns": ["github-workflows-*"],
+              "template": {
+                "settings": {
+                  "number_of_shards": 1,
+                  "number_of_replicas": 0
+                },
+                "mappings": {
+                  "dynamic_date_formats": ["strict_date_optional_time"],
+                  "dynamic_templates": [
+                    {
+                      "strings_as_text_and_keyword": {
+                        "match_mapping_type": "string",
+                        "mapping": {
+                          "type": "text",
+                          "fields": {
+                            "keyword": {
+                              "type": "keyword",
+                              "ignore_above": 256
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }'
+
+      - name: Seed Elasticsearch data
+        run: python3 scripts/seed_data.py
+
+      - name: Validate MVP smoke
+        run: python3 scripts/test_mvp_queries.py
+
+      - name: Validate HTTP service
+        run: python3 scripts/test_http_service.py
+
+      - name: Validate HTTP service auth
+        run: python3 scripts/test_http_service_auth.py

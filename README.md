@@ -301,6 +301,19 @@ docker run --rm -p 8787:8787 \
   agent/http_service.py --host 0.0.0.0 --port 8787
 ```
 
+### CI de validacao do agente
+
+O workflow [ci-agent.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/ci-agent.yml) executa duas camadas:
+- `unit-fast`: compilacao, teste do provider gateway e renderizacao/UI
+- `integration-elasticsearch`: sobe Elasticsearch, cria template, faz seed e valida CLI + API HTTP
+
+Essa esteira foi pensada para:
+- proteger `main` e `develop`
+- validar o modo HTTP e CLI da mesma imagem/logica
+- evitar depender de Ollama no runner para perguntas deterministicas
+
+Se quiser endurecer a governanca, o passo recomendado e marcar essa workflow como obrigatoria nas branch protections.
+
 ## 🔍 Troubleshooting
 
 ### Autenticação no Elasticsearch

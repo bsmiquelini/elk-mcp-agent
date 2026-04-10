@@ -62,6 +62,19 @@ docker run --rm -p 8787:8787 \
   agent/http_service.py --host 0.0.0.0 --port 8787
 ```
 
+## CI antes do publish
+
+O workflow [ci-agent.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/ci-agent.yml) valida:
+- compilacao e testes rapidos do agente
+- integracao com Elasticsearch seeded
+- smoke do modo CLI
+- smoke do modo HTTP
+- smoke do modo HTTP com bearer token
+
+Recomendacao operacional:
+- exigir `Agent CI` como check obrigatorio antes de merge
+- deixar o workflow de build/push publicar apenas a partir de branches protegidas
+
 ## Kubernetes
 
 Para produção interna, o caminho recomendado deixa o modelo atrás de um gateway
