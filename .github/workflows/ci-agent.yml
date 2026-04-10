@@ -163,3 +163,6 @@ jobs:
 
       - name: Validate HTTP service auth
         run: python3 scripts/test_http_service_auth.py
+
+      - name: Validate executive report endpoint
+        run: python3 scripts/test_http_report_service.py

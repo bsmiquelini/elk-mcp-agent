@@ -93,6 +93,7 @@ python3 agent/http_service.py --host 0.0.0.0 --port 8787
 Endpoints:
 - `GET /healthz`
 - `POST /v1/ask`
+- `POST /v1/report`
 
 Configurações importantes em [config.yaml](/home/bruno/lab_ia/elk-mcp-agent/config.yaml):
 - `agent.service.auth.enabled`
@@ -119,6 +120,20 @@ curl -s http://localhost:8787/v1/ask \
   -H 'Authorization: Bearer troque-este-token' \
   -H 'Content-Type: application/json' \
   -d '{"question":"Qual foi o ultimo workflow que falhou em produção?"}'
+```
+
+Relatório executivo via API:
+
+```bash
+curl -s http://localhost:8787/v1/report \
+  -H 'Authorization: Bearer troque-este-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt":"Quero um resumo executivo de CI/CD com foco em risco operacional e PRD",
+    "time_range":"30d",
+    "include":"overview,risk,prd",
+    "title":"Resumo Executivo CI/CD"
+  }'
 ```
 
 ### Provider corporativo recomendado
@@ -155,6 +170,9 @@ python3 scripts/test_http_service.py
 
 # Smoke da API HTTP com auth bearer
 python3 scripts/test_http_service_auth.py
+
+# Smoke do endpoint de relatorio executivo
+python3 scripts/test_http_report_service.py
 ```
 
 ## 📈 Relatório executivo

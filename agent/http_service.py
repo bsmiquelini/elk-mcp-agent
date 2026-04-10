@@ -5,9 +5,7 @@ API HTTP simples para consumo interno do agente.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
-import threading
 import time
 import uuid
 import sys
@@ -19,74 +17,24 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).parent.parent / "mcp_server"))
 
 from config_loader import load_config
+from executive_report import generate_sections, parse_include_sections, render_report, slugify
 from logging_utils import get_logger, log_event
 from provider_health import check_provider
-from runtime import CONFIG_PATH, open_agent_runtime
+from runtime import AgentRuntimeWorker, CONFIG_PATH
 
 
 def _json_bytes(payload: dict) -> bytes:
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
 
-class RuntimeWorker:
-    def __init__(self, config_path: str, *, request_timeout_seconds: int, logger):
-        self.config_path = config_path
-        self.request_timeout_seconds = request_timeout_seconds
-        self.logger = logger
-        self.loop = None
-        self.thread = None
-        self.runtime = None
-        self.context = None
-        self.ready = threading.Event()
-        self.failed = None
-        self.ask_lock = threading.Lock()
-
-    def start(self):
-        self.thread = threading.Thread(target=self._run, name="agent-runtime", daemon=True)
-        self.thread.start()
-        self.ready.wait(timeout=30)
-        if self.failed:
-            raise self.failed
-        if not self.runtime:
-            raise RuntimeError("Runtime do agente não ficou pronto.")
-
-    def _run(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        try:
-            self.loop.run_until_complete(self._startup())
-        except Exception as exc:
-            self.failed = exc
-            self.ready.set()
-            return
-        self.ready.set()
-        self.loop.run_forever()
-        self.loop.run_until_complete(self._shutdown())
-        self.loop.close()
-
-    async def _startup(self):
-        self.context = open_agent_runtime(self.config_path)
-        self.runtime = await self.context.__aenter__()
-        log_event(self.logger, "info", "runtime_started")
-
-    async def _shutdown(self):
-        if self.context is not None:
-            await self.context.__aexit__(None, None, None)
-            log_event(self.logger, "info", "runtime_stopped")
-
-    def ask(self, question: str) -> str:
-        if not self.loop or not self.runtime:
-            raise RuntimeError("Runtime do agente indisponível.")
-        with self.ask_lock:
-            future = asyncio.run_coroutine_threadsafe(self.runtime.ask(question), self.loop)
-            return future.result(timeout=self.request_timeout_seconds)
-
-    def stop(self):
-        if not self.loop:
-            return
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        if self.thread:
-            self.thread.join(timeout=10)
+def _resolve_report_output(root: Path, prompt: str, output: str | None) -> Path:
+    reports_dir = root / "artifacts" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    output_path = Path(output) if output else reports_dir / f"{slugify(prompt)}.html"
+    if not output_path.is_absolute():
+        output_path = root / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return output_path
 
 
 def _extract_token(header_value: str | None) -> str:
@@ -121,12 +69,9 @@ def _build_handler(config_path: str):
         json_output=bool(service_cfg.get("json_logs", True)),
         level=str(service_cfg.get("log_level", "INFO")),
     )
-    runtime_worker = RuntimeWorker(
-        config_path,
-        request_timeout_seconds=request_timeout_seconds,
-        logger=logger,
-    )
+    runtime_worker = AgentRuntimeWorker(config_path)
     runtime_worker.start()
+    log_event(logger, "info", "runtime_started")
 
     class AgentHandler(BaseHTTPRequestHandler):
         server_version = "ELKMCPAgentHTTP/1.0"
@@ -183,7 +128,7 @@ def _build_handler(config_path: str):
         def do_POST(self):
             route = urlparse(self.path).path
             request_id = self._request_id()
-            if route != "/v1/ask":
+            if route not in ("/v1/ask", "/v1/report"):
                 self._send_json(404, {"error": "not_found"})
                 return
             auth_cfg = service_cfg.get("auth", {})
@@ -201,13 +146,44 @@ def _build_handler(config_path: str):
                 return
 
             question = str(payload.get("question") or "").strip()
-            if not question:
+            prompt = str(payload.get("prompt") or "").strip()
+
+            if route == "/v1/ask" and not question:
                 self._send_json(400, {"error": "question_required"})
+                return
+            if route == "/v1/report" and not prompt:
+                self._send_json(400, {"error": "prompt_required"})
                 return
 
             started = time.perf_counter()
             try:
-                answer = runtime_worker.ask(question)
+                if route == "/v1/ask":
+                    result_payload = {"question": question, "answer": runtime_worker.ask(question, timeout=request_timeout_seconds)}
+                else:
+                    config = runtime_worker.runtime.config
+                    time_range = str(payload.get("time_range") or config.get("ui", {}).get("reports", {}).get("default_time_range", "7d"))
+                    include_sections = parse_include_sections(payload.get("include"), config)
+                    title = str(payload.get("title") or prompt)
+                    output_path = _resolve_report_output(Path(__file__).resolve().parents[1], prompt, payload.get("output"))
+                    sections = runtime_worker.run(
+                        generate_sections(
+                            runtime_worker.runtime,
+                            prompt=prompt,
+                            time_range=time_range,
+                            include_sections=include_sections,
+                        ),
+                        timeout=request_timeout_seconds,
+                    )
+                    html = render_report(runtime_worker.runtime.config, title, sections)
+                    output_path.write_text(html, encoding="utf-8")
+                    result_payload = {
+                        "prompt": prompt,
+                        "title": title,
+                        "time_range": time_range,
+                        "include_sections": include_sections,
+                        "output_path": str(output_path),
+                        "section_count": len(sections),
+                    }
             except Exception as exc:
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 log_event(
@@ -242,8 +218,7 @@ def _build_handler(config_path: str):
             self._send_json(
                 200,
                 {
-                    "question": question,
-                    "answer": answer,
+                    **result_payload,
                     "service": domain_name,
                     "request_id": request_id,
                     "latency_ms": latency_ms,
@@ -276,6 +251,7 @@ def main():
         runtime_worker = getattr(handler, "runtime_worker", None)
         if runtime_worker:
             runtime_worker.stop()
+            log_event(logger, "info", "runtime_stopped")
         server.server_close()
 
 

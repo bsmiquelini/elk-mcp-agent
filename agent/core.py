@@ -71,24 +71,37 @@ async def startup(mcp_session) -> dict:
     return json.loads(result.content[0].text)
 
 
-async def run_turn(config, session, mcp_session, tools, user_input, schema) -> str:
+async def run_turn(
+    config,
+    session,
+    mcp_session,
+    tools,
+    user_input,
+    schema,
+    *,
+    emit_console: bool = True,
+    return_details: bool = False,
+):
     question, hints = normalize_question(user_input, config)
     enriched = enrich_user_message(question, hints)
     interface_cfg = config.get("agent", {}).get("interface", {})
 
-    if hints and interface_cfg.get("show_vocabulary_hints", False):
+    if emit_console and hints and interface_cfg.get("show_vocabulary_hints", False):
         print_info(f"📖 Vocabulário detectado: {', '.join(hints)}")
 
     direct_result = await try_direct_answer(question, schema, mcp_session, call_mcp_tool, config=config)
     if direct_result:
         direct_answer = direct_result["answer"]
         dashboard = direct_result.get("dashboard")
+        dashboard_path = None
         if dashboard:
             dashboard_path = save_dashboard_html(config, question, direct_answer, dashboard)
-            if dashboard_path:
+            if emit_console and dashboard_path:
                 print_info(f"Dashboard HTML salvo em {dashboard_path}")
         session.add_user(enriched)
         session.add_assistant(direct_answer)
+        if return_details:
+            return {"answer": direct_answer, "dashboard_path": str(dashboard_path) if dashboard_path else None}
         return direct_answer
 
     session.add_user(enriched)
@@ -117,6 +130,8 @@ async def run_turn(config, session, mcp_session, tools, user_input, schema) -> s
 
         if not tool_calls:
             session.add_assistant(content)
+            if return_details:
+                return {"answer": content, "dashboard_path": None}
             return content
 
         session.messages.append(
@@ -142,4 +157,7 @@ async def run_turn(config, session, mcp_session, tools, user_input, schema) -> s
                 }
             )
 
-    return "Não consegui completar a análise. Tente reformular a pergunta."
+    fallback = "Não consegui completar a análise. Tente reformular a pergunta."
+    if return_details:
+        return {"answer": fallback, "dashboard_path": None}
+    return fallback

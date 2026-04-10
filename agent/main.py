@@ -90,7 +90,7 @@ async def main():
                 )
                 with print_thinking():
                     try:
-                        answer = await runtime.ask(args.question, session=session)
+                        answer = await runtime.ask(args.question, session=session, emit_console=True)
                     except KeyboardInterrupt:
                         _bye()
                     except RuntimeError as exc:
@@ -128,7 +128,7 @@ async def main():
 
                 try:
                     with print_thinking():
-                        answer = await runtime.ask(user_input, session=session)
+                        answer = await runtime.ask(user_input, session=session, emit_console=True)
                 except KeyboardInterrupt:
                     _bye()
                 except RuntimeError as exc:

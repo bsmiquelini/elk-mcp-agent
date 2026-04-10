@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -42,7 +44,14 @@ class AgentRuntime:
         session.set_system_prompt(self.system_prompt)
         return session
 
-    async def ask(self, question: str, session: Session | None = None) -> str:
+    async def ask(
+        self,
+        question: str,
+        session: Session | None = None,
+        *,
+        return_details: bool = False,
+        emit_console: bool = False,
+    ) -> str | dict:
         local_session = session or self.new_session()
         return await run_turn(
             config=self.config,
@@ -51,7 +60,76 @@ class AgentRuntime:
             tools=self.tools_spec,
             user_input=question,
             schema=self.schema,
+            emit_console=emit_console,
+            return_details=return_details,
         )
+
+
+class AgentRuntimeWorker:
+    def __init__(self, config_path: str | None = None):
+        self.config_path = str(Path(config_path) if config_path else CONFIG_PATH)
+        self.loop = None
+        self.thread = None
+        self.runtime = None
+        self.context = None
+        self.ready = threading.Event()
+        self.failed = None
+        self.run_lock = threading.Lock()
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run, name="agent-runtime", daemon=True)
+        self.thread.start()
+        self.ready.wait(timeout=30)
+        if self.failed:
+            raise self.failed
+        if not self.runtime:
+            raise RuntimeError("Runtime do agente não ficou pronto.")
+
+    def _run(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_until_complete(self._startup())
+        except Exception as exc:
+            self.failed = exc
+            self.ready.set()
+            return
+        self.ready.set()
+        self.loop.run_forever()
+        self.loop.run_until_complete(self._shutdown())
+        self.loop.close()
+
+    async def _startup(self):
+        self.context = open_agent_runtime(self.config_path)
+        self.runtime = await self.context.__aenter__()
+
+    async def _shutdown(self):
+        if self.context is not None:
+            await self.context.__aexit__(None, None, None)
+
+    def run(self, coro, *, timeout: int = 180):
+        if not self.loop or not self.runtime:
+            raise RuntimeError("Runtime do agente indisponível.")
+        with self.run_lock:
+            future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+            return future.result(timeout=timeout)
+
+    def ask(self, question: str, *, return_details: bool = False, emit_console: bool = False, timeout: int = 180):
+        return self.run(
+            self.runtime.ask(
+                question,
+                return_details=return_details,
+                emit_console=emit_console,
+            ),
+            timeout=timeout,
+        )
+
+    def stop(self):
+        if not self.loop:
+            return
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        if self.thread:
+            self.thread.join(timeout=10)
 
 
 def build_server_params() -> StdioServerParameters:

@@ -166,6 +166,20 @@ curl -s http://localhost:8787/v1/ask \
   -d '{"question":"Qual foi o ultimo workflow que falhou em produção?"}'
 ```
 
+Relatório executivo via API:
+
+```bash
+curl -s http://localhost:8787/v1/report \
+  -H 'Authorization: Bearer troque-este-token' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt":"Quero um resumo executivo de CI/CD com foco em risco operacional e PRD",
+    "time_range":"30d",
+    "include":"overview,risk,prd",
+    "title":"Resumo Executivo CI/CD"
+  }'
+```
+
 Em container:
 
 ```bash
