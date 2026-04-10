@@ -302,6 +302,16 @@ Comportamento:
 - `push` em `main` e `develop`: faz build e push
 - `push` de tag `v*`: faz build e push
 - `workflow_dispatch`: execução manual
+- antes do push, a imagem é validada nos dois modos:
+  - `agent/main.py --help`
+  - `agent/http_service.py --help`
+
+Boas práticas aplicadas no [Dockerfile](/home/bruno/lab_ia/elk-mcp-agent/agent/Dockerfile):
+- multi-stage build
+- dependências instaladas em `venv` no stage de build
+- imagem final sem ferramentas de build
+- execução com usuário não-root
+- `COPY --chown` para reduzir permissões excessivas
 
 A mesma imagem pode ser usada nos dois modos:
 - CLI: `python3 agent/main.py` como comando padrão

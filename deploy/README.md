@@ -48,6 +48,17 @@ Tags geradas:
 - `sha-<commit>`
 - `latest` na branch padrão
 
+Validações aplicadas antes do push:
+- build da imagem em modo local no runner
+- smoke do modo CLI com `agent/main.py --help`
+- smoke do modo HTTP com `agent/http_service.py --help`
+
+Boas práticas da imagem:
+- `Dockerfile` multi-stage
+- runtime sem root
+- dependências isoladas em `venv`
+- redução de contexto via [.dockerignore](/home/bruno/lab_ia/elk-mcp-agent/.dockerignore)
+
 Uso em CLI:
 
 ```bash

@@ -6,5 +6,13 @@ __pycache__
 .mypy_cache
 .ruff_cache
 .env
+.env.*
+!.env.example
 infra/nginx/certs
 *.log
+artifacts
+deploy/k8s/secret.yaml
+deploy/k8s/secret.*.yaml
+docker-compose.ymlbkp
+infra/nginx/nginx.conf.bkp
+.github
