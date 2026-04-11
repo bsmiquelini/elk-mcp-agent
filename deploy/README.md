@@ -67,8 +67,8 @@ Validações aplicadas antes do push:
 - smoke do modo HTTP com `agent/http_service.py --help`
 - smoke do MCP server com `python -m compileall mcp_server`
 - smoke da imagem Ollama com `ollama --version`
-- Trivy Action `v0.35.0` com Trivy `v0.69.3` para vulnerabilidades `CRITICAL` e `HIGH` nas imagens antes do push
-- no Ollama customizado, o scan de pacotes do sistema é bloqueante e o scan completo do binário upstream é advisory, porque o binário vem da imagem oficial `ollama/ollama`
+- Trivy Action `v0.35.0` com Trivy `v0.69.3` em modo bloqueante de zero vulnerabilidades para agent e MCP server
+- no Ollama customizado, o scan de pacotes do sistema é bloqueante para `HIGH`/`CRITICAL` e o scan completo do binário upstream é advisory, porque a imagem oficial `ollama/ollama:latest` atual ainda reporta CVEs no `/usr/bin/ollama`
 
 Observação sobre Gitleaks:
 
@@ -78,6 +78,7 @@ Observação sobre Gitleaks:
 Boas práticas da imagem:
 - `Dockerfile` multi-stage
 - runtime sem root
+- base Python hardened `cgr.dev/chainguard/python`
 - dependências isoladas em `venv`
 - redução de contexto via [.dockerignore](/home/bruno/lab_ia/elk-mcp-agent/.dockerignore)
 - exclusão explícita de `docker-compose.yml` e `infra/` do contexto de build

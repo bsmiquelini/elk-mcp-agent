@@ -114,6 +114,7 @@ jobs:
           context: .
           file: agent/Dockerfile
           platforms: linux/amd64
+          pull: true
           load: true
           push: false
           tags: ${{ env.IMAGE_NAME_AGENT }}:ci-${{ github.sha }}
@@ -136,9 +137,8 @@ jobs:
           format: table
           exit-code: "1"
           scanners: vuln
-          ignore-unfixed: true
           vuln-type: os,library
-          severity: CRITICAL,HIGH
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           version: v0.69.3
 
       - name: Build MCP server image for validation
@@ -147,6 +147,7 @@ jobs:
           context: .
           file: mcp_server/Dockerfile
           platforms: linux/amd64
+          pull: true
           load: true
           push: false
           tags: ${{ env.IMAGE_NAME_MCP }}:ci-${{ github.sha }}
@@ -165,9 +166,8 @@ jobs:
           format: table
           exit-code: "1"
           scanners: vuln
-          ignore-unfixed: true
           vuln-type: os,library
-          severity: CRITICAL,HIGH
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           version: v0.69.3
 
       - name: Build and push agent image
@@ -177,6 +177,7 @@ jobs:
           context: .
           file: agent/Dockerfile
           platforms: linux/amd64
+          pull: true
           push: true
           tags: ${{ steps.meta_agent.outputs.tags }}
           labels: ${{ steps.meta_agent.outputs.labels }}
@@ -190,6 +191,7 @@ jobs:
           context: .
           file: mcp_server/Dockerfile
           platforms: linux/amd64
+          pull: true
           push: true
           tags: ${{ steps.meta_mcp.outputs.tags }}
           labels: ${{ steps.meta_mcp.outputs.labels }}

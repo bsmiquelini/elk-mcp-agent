@@ -83,6 +83,8 @@ No GitHub Actions, os workflows de imagem executam:
 
 - Gitleaks antes do build para barrar secrets versionados.
 - Trivy Action `v0.35.0` com Trivy `v0.69.3` nas imagens carregadas localmente antes do push.
+- Agent e MCP server bloqueiam o push se houver qualquer vulnerabilidade `os,library`.
+- A imagem customizada do Ollama mantém scan de sistema bloqueante para `HIGH`/`CRITICAL` e scan completo advisory enquanto a imagem oficial `ollama/ollama:latest` reportar CVEs no binário `/usr/bin/ollama`; para zerar esse item é necessário consumir uma release upstream recompilada com Go e dependências corrigidas, ou manter um fork interno do build do Ollama.
 - Smoke tests de CLI, HTTP, MCP server e Ollama.
 
 ## Cenário 1: VM com Docker

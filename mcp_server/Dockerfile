@@ -1,9 +1,9 @@
-FROM python:3.12-slim AS builder
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    VENV_PATH=/opt/venv
+    VENV_PATH=/tmp/venv
 
 WORKDIR /build
 
@@ -15,28 +15,20 @@ RUN "${VENV_PATH}/bin/pip" install --upgrade pip setuptools wheel && \
     "${VENV_PATH}/bin/pip" install -r /tmp/mcp-requirements.txt
 
 
-FROM python:3.12-slim AS runtime
+FROM cgr.dev/chainguard/python:latest AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PATH=/opt/venv/bin:$PATH \
-    DEBIAN_FRONTEND=noninteractive
+    PATH=/tmp/venv/bin:$PATH
 
 WORKDIR /app
 
-RUN apt-get update && \
-    apt-get upgrade -y --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+COPY --from=builder /tmp/venv /tmp/venv
+COPY --chown=65532:65532 mcp_server ./mcp_server
+COPY --chown=65532:65532 config.yaml README.md .env.example ./
 
-RUN groupadd --system app && \
-    useradd --system --gid app --create-home --home-dir /home/app app
+USER 65532
 
-COPY --from=builder /opt/venv /opt/venv
-COPY --chown=app:app mcp_server ./mcp_server
-COPY --chown=app:app config.yaml README.md .env.example ./
-
-USER app
-
-ENTRYPOINT ["python3"]
+ENTRYPOINT ["python"]
 CMD ["mcp_server/main.py"]

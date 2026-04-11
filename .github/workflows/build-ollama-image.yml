@@ -94,6 +94,7 @@ jobs:
           context: .
           file: ollama/Dockerfile
           platforms: linux/amd64
+          pull: true
           build-args: |
             OLLAMA_PRELOAD_MODEL=${{ env.OLLAMA_PRELOAD_MODEL }}
           load: true
@@ -139,6 +140,7 @@ jobs:
           context: .
           file: ollama/Dockerfile
           platforms: linux/amd64
+          pull: true
           build-args: |
             OLLAMA_PRELOAD_MODEL=${{ env.OLLAMA_PRELOAD_MODEL }}
           push: true

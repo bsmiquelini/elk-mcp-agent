@@ -333,12 +333,17 @@ Validação local de segurança:
 ```bash
 docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source=/repo --redact --no-banner
 
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os,library elk-mcp-agent:test
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os,library elk-mcp-server:test
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os elk-mcp-ollama:test
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --pkg-types os,library elk-mcp-agent:test
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --pkg-types os,library elk-mcp-server:test
+
+# Ollama: gate bloqueante atual para pacotes do sistema HIGH/CRITICAL
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL --pkg-types os elk-mcp-ollama:test
+
+# Ollama: visibilidade completa advisory do binário upstream
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln elk-mcp-ollama:test
 ```
 
-Os workflows de build/push no GitHub Actions executam Gitleaks antes dos builds e Trivy Action `v0.35.0` com Trivy `v0.69.3` nas imagens antes do push para o GHCR. A baseline [.gitleaksignore](/home/bruno/lab_ia/elk-mcp-agent/.gitleaksignore) registra apenas achados históricos já removidos do estado atual.
+Os workflows de build/push no GitHub Actions executam Gitleaks antes dos builds e Trivy Action `v0.35.0` com Trivy `v0.69.3` nas imagens antes do push para o GHCR. Agent e MCP usam gate bloqueante de zero vulnerabilidades em `os,library`; a imagem customizada do Ollama mantém o binário upstream em scan advisory porque a `ollama/ollama:latest` atual ainda reporta CVEs no `/usr/bin/ollama`. A baseline [.gitleaksignore](/home/bruno/lab_ia/elk-mcp-agent/.gitleaksignore) registra apenas achados históricos já removidos do estado atual.
 
 ## Outras referências
 
