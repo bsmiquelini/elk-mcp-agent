@@ -6,8 +6,23 @@ image:
   pullPolicy: IfNotPresent
 
 command:
-  - sleep
-  - infinity
+  - python3
+  - agent/http_service.py
+
+args:
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8787"
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8787
+
+probes:
+  livenessPath: /healthz
+  readinessPath: /readyz
 
 env:
   ELASTICSEARCH_URL: "https://elk-prod.exemplo.intra:9200"

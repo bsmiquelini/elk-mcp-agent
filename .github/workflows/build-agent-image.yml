@@ -1,4 +1,4 @@
-name: Build Runtime Images
+name: Build Agent Images
 
 on:
   push:
@@ -14,7 +14,7 @@ on:
       - "scripts/**"
       - "config.yaml"
       - "agent/Dockerfile"
-      - "ollama/**"
+      - "mcp_server/Dockerfile"
       - "mcp_server/requirements.txt"
       - "agent/requirements.txt"
       - "scripts/requirements-seed.txt"
@@ -28,7 +28,7 @@ on:
       - "scripts/**"
       - "config.yaml"
       - "agent/Dockerfile"
-      - "ollama/**"
+      - "mcp_server/Dockerfile"
       - "mcp_server/requirements.txt"
       - "agent/requirements.txt"
       - "scripts/requirements-seed.txt"
@@ -39,15 +39,33 @@ on:
 permissions:
   contents: read
   packages: write
+  pull-requests: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME_AGENT: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-agent
-  IMAGE_NAME_OLLAMA: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-ollama
+  IMAGE_NAME_MCP: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-mcp-server
 
 jobs:
+  gitleaks:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: gitleaks
 
     steps:
       - name: Checkout
@@ -78,11 +96,11 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Extract ollama metadata
-        id: meta_ollama
+      - name: Extract MCP server metadata
+        id: meta_mcp
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME_OLLAMA }}
+          images: ${{ env.IMAGE_NAME_MCP }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -111,24 +129,46 @@ jobs:
         run: |
           docker run --rm ${{ env.IMAGE_NAME_AGENT }}:ci-${{ github.sha }} agent/http_service.py --help
 
-      - name: Build custom Ollama image for validation
+      - name: Trivy scan agent image
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_AGENT }}:ci-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          scanners: vuln
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.69.3
+
+      - name: Build MCP server image for validation
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ollama/Dockerfile
+          file: mcp_server/Dockerfile
           platforms: linux/amd64
-          build-args: |
-            OLLAMA_PRELOAD_MODEL=qwen2.5:7b
           load: true
           push: false
-          tags: ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }}
-          labels: ${{ steps.meta_ollama.outputs.labels }}
+          tags: ${{ env.IMAGE_NAME_MCP }}:ci-${{ github.sha }}
+          labels: ${{ steps.meta_mcp.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test custom Ollama image
+      - name: Smoke test MCP server image
         run: |
-          docker run --rm --entrypoint ollama ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }} --version
+          docker run --rm ${{ env.IMAGE_NAME_MCP }}:ci-${{ github.sha }} -m compileall mcp_server
+
+      - name: Trivy scan MCP server image
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_MCP }}:ci-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          scanners: vuln
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.69.3
 
       - name: Build and push agent image
         if: github.event_name != 'pull_request'
@@ -143,18 +183,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push custom Ollama image
+      - name: Build and push MCP server image
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ollama/Dockerfile
+          file: mcp_server/Dockerfile
           platforms: linux/amd64
-          build-args: |
-            OLLAMA_PRELOAD_MODEL=qwen2.5:7b
           push: true
-          tags: ${{ steps.meta_ollama.outputs.tags }}
-          labels: ${{ steps.meta_ollama.outputs.labels }}
+          tags: ${{ steps.meta_mcp.outputs.tags }}
+          labels: ${{ steps.meta_mcp.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -164,11 +202,11 @@ jobs:
             echo "## Runtime images"
             echo ""
             echo "- Agent image: \`${{ env.IMAGE_NAME_AGENT }}\`"
-            echo "- Ollama image: \`${{ env.IMAGE_NAME_OLLAMA }}\`"
+            echo "- MCP server image: \`${{ env.IMAGE_NAME_MCP }}\`"
             echo "- Agent tags:"
             echo '${{ steps.meta_agent.outputs.tags }}' | sed 's/^/- /'
-            echo "- Ollama tags:"
-            echo '${{ steps.meta_ollama.outputs.tags }}' | sed 's/^/- /'
+            echo "- MCP server tags:"
+            echo '${{ steps.meta_mcp.outputs.tags }}' | sed 's/^/- /'
             echo ""
             echo "CLI:"
             echo '\`\`\`bash'
@@ -178,10 +216,5 @@ jobs:
             echo "HTTP service:"
             echo '\`\`\`bash'
             echo "docker run --rm -p 8787:8787 ${{ env.IMAGE_NAME_AGENT }}:sha-${GITHUB_SHA::7} agent/http_service.py --host 0.0.0.0 --port 8787"
-            echo '\`\`\`'
-            echo ""
-            echo "Custom Ollama:"
-            echo '\`\`\`bash'
-            echo "docker run --rm -p 11434:11434 ${{ env.IMAGE_NAME_OLLAMA }}:sha-${GITHUB_SHA::7}"
             echo '\`\`\`'
           } >> "$GITHUB_STEP_SUMMARY"

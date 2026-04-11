@@ -75,15 +75,34 @@ class AgentRuntimeWorker:
         self.ready = threading.Event()
         self.failed = None
         self.run_lock = threading.Lock()
+        self.start_lock = threading.Lock()
 
-    def start(self):
-        self.thread = threading.Thread(target=self._run, name="agent-runtime", daemon=True)
-        self.thread.start()
-        self.ready.wait(timeout=30)
-        if self.failed:
-            raise self.failed
-        if not self.runtime:
-            raise RuntimeError("Runtime do agente não ficou pronto.")
+    def start(self, *, raise_on_failure: bool = True, timeout: int = 30) -> bool:
+        with self.start_lock:
+            if self.runtime and self.thread and self.thread.is_alive():
+                return True
+
+            self.ready.clear()
+            self.failed = None
+            self.runtime = None
+            self.context = None
+            self.loop = None
+            self.thread = threading.Thread(target=self._run, name="agent-runtime", daemon=True)
+            self.thread.start()
+            self.ready.wait(timeout=timeout)
+
+            if self.failed:
+                if raise_on_failure:
+                    raise self.failed
+                return False
+
+            if not self.runtime:
+                self.failed = RuntimeError("Runtime do agente não ficou pronto.")
+                if raise_on_failure:
+                    raise self.failed
+                return False
+
+            return True
 
     def _run(self):
         self.loop = asyncio.new_event_loop()
@@ -93,6 +112,7 @@ class AgentRuntimeWorker:
         except Exception as exc:
             self.failed = exc
             self.ready.set()
+            self.loop.close()
             return
         self.ready.set()
         self.loop.run_forever()
@@ -125,11 +145,25 @@ class AgentRuntimeWorker:
         )
 
     def stop(self):
-        if not self.loop:
+        if not self.loop or self.loop.is_closed():
             return
         self.loop.call_soon_threadsafe(self.loop.stop)
         if self.thread:
             self.thread.join(timeout=10)
+
+    def status(self) -> dict:
+        ready = bool(self.runtime and self.thread and self.thread.is_alive())
+        if ready:
+            message = "Runtime do agente acessivel."
+        elif self.failed:
+            message = f"Runtime do agente indisponivel: {self.failed}"
+        else:
+            message = "Runtime do agente ainda nao iniciado."
+        return {
+            "ready": ready,
+            "failed": bool(self.failed),
+            "message": message,
+        }
 
 
 def build_server_params() -> StdioServerParameters:

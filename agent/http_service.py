@@ -64,6 +64,7 @@ def _build_handler(config_path: str):
     domain_name = config.get("domain", {}).get("name", "ELK MCP Agent")
     service_cfg = config.get("agent", {}).get("service", {})
     request_timeout_seconds = int(service_cfg.get("request_timeout_seconds", 180))
+    max_body_bytes = int(service_cfg.get("max_body_bytes", 1_048_576))
     logger = get_logger(
         "agent.http",
         json_output=bool(service_cfg.get("json_logs", True)),
@@ -84,8 +85,21 @@ def _build_handler(config_path: str):
         elasticsearch_auth_mode=elasticsearch_status.get("auth_mode"),
     )
     runtime_worker = AgentRuntimeWorker(config_path)
-    runtime_worker.start()
-    log_event(logger, "info", "runtime_started", schema_cache_ttl_seconds=config.get("agent", {}).get("runtime", {}).get("schema_cache_ttl_seconds", 0))
+    runtime_started = runtime_worker.start(raise_on_failure=False)
+    if runtime_started:
+        log_event(
+            logger,
+            "info",
+            "runtime_started",
+            schema_cache_ttl_seconds=config.get("agent", {}).get("runtime", {}).get("schema_cache_ttl_seconds", 0),
+        )
+    else:
+        log_event(
+            logger,
+            "warning",
+            "runtime_start_degraded",
+            detail=runtime_worker.status().get("message"),
+        )
 
     class AgentHandler(BaseHTTPRequestHandler):
         server_version = "ELKMCPAgentHTTP/1.0"
@@ -121,7 +135,11 @@ def _build_handler(config_path: str):
                 return
             provider_ok = get_provider_status(config)
             elastic_ok = get_elasticsearch_status(config)
-            ready = bool(provider_ok.get("ready") and elastic_ok.get("ready"))
+            if route == "/readyz" and provider_ok.get("ready") and elastic_ok.get("ready") and not runtime_worker.status().get("ready"):
+                runtime_worker.start(raise_on_failure=False)
+            runtime_ok = runtime_worker.status()
+            ready = bool(provider_ok.get("ready") and elastic_ok.get("ready") and runtime_ok.get("ready"))
+            status_code = 200 if route == "/healthz" or ready else 503
             log_event(
                 logger,
                 "info",
@@ -130,11 +148,12 @@ def _build_handler(config_path: str):
                 request_id=request_id,
                 provider_ready=provider_ok.get("ready"),
                 elasticsearch_ready=elastic_ok.get("ready"),
+                runtime_ready=runtime_ok.get("ready"),
             )
             self._send_json(
-                200,
+                status_code,
                 {
-                    "status": "ok",
+                    "status": "ok" if status_code == 200 else "not_ready",
                     "ready": ready,
                     "service": domain_name,
                     "request_id": request_id,
@@ -142,6 +161,7 @@ def _build_handler(config_path: str):
                     "checks": {
                         "provider": provider_ok,
                         "elasticsearch": elastic_ok,
+                        "runtime": runtime_ok,
                     },
                 },
             )
@@ -160,6 +180,25 @@ def _build_handler(config_path: str):
 
             try:
                 length = int(self.headers.get("Content-Length", "0"))
+                if length > max_body_bytes:
+                    log_event(
+                        logger,
+                        "warning",
+                        "request_rejected_payload_too_large",
+                        route=route,
+                        request_id=request_id,
+                        content_length=length,
+                        max_body_bytes=max_body_bytes,
+                    )
+                    self._send_json(
+                        413,
+                        {
+                            "error": "payload_too_large",
+                            "request_id": request_id,
+                            "max_body_bytes": max_body_bytes,
+                        },
+                    )
+                    return
                 raw = self.rfile.read(length) if length else b"{}"
                 payload = json.loads(raw.decode("utf-8"))
             except Exception:
@@ -183,6 +222,25 @@ def _build_handler(config_path: str):
                 return
             if route == "/v1/report" and not prompt:
                 self._send_json(400, {"error": "prompt_required"})
+                return
+            if not runtime_worker.status().get("ready") and not runtime_worker.start(raise_on_failure=False):
+                runtime_status = runtime_worker.status()
+                log_event(
+                    logger,
+                    "error",
+                    "runtime_unavailable",
+                    route=route,
+                    request_id=request_id,
+                    detail=runtime_status.get("message"),
+                )
+                self._send_json(
+                    503,
+                    {
+                        "error": "runtime_unavailable",
+                        "message": runtime_status.get("message"),
+                        "request_id": request_id,
+                    },
+                )
                 return
 
             started = time.perf_counter()

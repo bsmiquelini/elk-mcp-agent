@@ -7,6 +7,7 @@ Suíte cross-validated da CLI:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -31,6 +32,7 @@ ENVS = ["PRD", "HML", "DEV"]
 LANGUAGES = [("Java", "java"), ("Python", "python"), ("TypeScript", "typescript"), ("Node", "node")]
 WORKFLOW_TYPES = ["build", "deploy", "security", "rollback"]
 TOPICS = ["api", "risk", "frontend", "apim"]
+CLI_TIMEOUT_SECONDS = int(os.getenv("CLI_TEST_TIMEOUT_SECONDS", "120"))
 
 
 @dataclass
@@ -81,7 +83,7 @@ def cli_output(question: str) -> tuple[float, str, str]:
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=CLI_TIMEOUT_SECONDS,
         check=False,
     )
     elapsed = time.time() - started

@@ -98,7 +98,15 @@ def get_provider_status(config: dict) -> dict[str, Any]:
 def get_elasticsearch_status(config: dict) -> dict[str, Any]:
     es_cfg = config.get("elasticsearch", {})
     url = es_cfg.get("url", "")
-    auth_mode = "api_key" if es_cfg.get("api_key") else "basic_auth"
+    configured_auth_mode = str(es_cfg.get("auth_mode") or "auto").lower()
+    has_basic_auth = bool(es_cfg.get("username") and es_cfg.get("password"))
+    has_api_key = bool(es_cfg.get("api_key"))
+    if configured_auth_mode == "auto":
+        auth_mode = "basic_auth" if has_basic_auth else "api_key" if has_api_key else "none"
+    elif configured_auth_mode in {"basic", "basic_auth"}:
+        auth_mode = "basic_auth"
+    else:
+        auth_mode = configured_auth_mode
     try:
         client = get_client(config)
         info = client.info()

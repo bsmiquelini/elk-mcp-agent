@@ -42,12 +42,15 @@ docker buildx bake -f deploy/docker-bake.hcl release --push
 
 ## Build e push via GitHub Actions
 
-O workflow [build-agent-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-agent-image.yml) publica as imagens do agente e do Ollama customizado no GHCR usando o `GITHUB_TOKEN` do repositório.
+O workflow [build-agent-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-agent-image.yml) publica as imagens do agente e do MCP server no GHCR usando o `GITHUB_TOKEN` do repositório.
+
+O workflow [build-ollama-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-ollama-image.yml) publica a imagem customizada do Ollama. Ele também aceita execução manual com o input `model`, permitindo trocar o modelo de preload sem alterar o código.
 
 Imagens publicadas:
 
 ```bash
 ghcr.io/<owner>/elk-mcp-agent-agent
+ghcr.io/<owner>/elk-mcp-agent-mcp-server
 ghcr.io/<owner>/elk-mcp-agent-ollama
 ```
 
@@ -58,10 +61,19 @@ Tags geradas:
 - `latest` na branch padrão
 
 Validações aplicadas antes do push:
+- Gitleaks para detecção de secrets no repositório
 - build da imagem em modo local no runner
 - smoke do modo CLI com `agent/main.py --help`
 - smoke do modo HTTP com `agent/http_service.py --help`
+- smoke do MCP server com `python -m compileall mcp_server`
 - smoke da imagem Ollama com `ollama --version`
+- Trivy Action `v0.35.0` com Trivy `v0.69.3` para vulnerabilidades `CRITICAL` e `HIGH` nas imagens antes do push
+- no Ollama customizado, o scan de pacotes do sistema é bloqueante e o scan completo do binário upstream é advisory, porque o binário vem da imagem oficial `ollama/ollama`
+
+Observação sobre Gitleaks:
+
+- [.gitleaksignore](/home/bruno/lab_ia/elk-mcp-agent/.gitleaksignore) contém apenas fingerprints históricos já removidos do estado atual.
+- novos secrets continuam quebrando o workflow.
 
 Boas práticas da imagem:
 - `Dockerfile` multi-stage
@@ -201,6 +213,16 @@ Healthcheck:
 ```bash
 curl -s http://localhost:8787/healthz
 ```
+
+Readiness para balanceadores e Kubernetes:
+
+```bash
+curl -i http://localhost:8787/readyz
+```
+
+O endpoint `/healthz` retorna `200` quando o processo HTTP está vivo. O endpoint
+`/readyz` retorna `503` quando Elasticsearch ou provider/modelo ainda não estão
+acessíveis, evitando envio de tráfego para uma instância degradada.
 
 Pergunta via API:
 

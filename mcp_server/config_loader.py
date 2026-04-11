@@ -153,6 +153,8 @@ def _apply_environment_overrides(config: dict) -> dict:
         service_cfg["port"] = int(os.getenv("AGENT_HTTP_PORT"))
     if os.getenv("AGENT_HTTP_REQUEST_TIMEOUT"):
         service_cfg["request_timeout_seconds"] = int(os.getenv("AGENT_HTTP_REQUEST_TIMEOUT"))
+    if os.getenv("AGENT_HTTP_MAX_BODY_BYTES"):
+        service_cfg["max_body_bytes"] = int(os.getenv("AGENT_HTTP_MAX_BODY_BYTES"))
     if os.getenv("AGENT_HTTP_JSON_LOGS") is not None:
         service_cfg["json_logs"] = os.getenv("AGENT_HTTP_JSON_LOGS").strip().lower() in {"1", "true", "yes", "on"}
     if os.getenv("AGENT_HTTP_LOG_LEVEL"):

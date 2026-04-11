@@ -17,12 +17,32 @@ spec:
         - name: agent
           image: registry.exemplo.intra/observability/elk-mcp-agent/agent:v1.0.0
           imagePullPolicy: IfNotPresent
-          command: ["sleep", "infinity"]
+          command: ["python3", "agent/http_service.py"]
+          args: ["--host", "0.0.0.0", "--port", "8787"]
+          ports:
+            - name: http
+              containerPort: 8787
           envFrom:
             - configMapRef:
                 name: elk-mcp-agent-config
             - secretRef:
                 name: elk-mcp-agent-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
           volumeMounts:
             - name: dashboards
               mountPath: /app/artifacts
@@ -36,3 +56,17 @@ spec:
       volumes:
         - name: dashboards
           emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elk-mcp-agent
+  namespace: observability-ai
+spec:
+  type: ClusterIP
+  selector:
+    app: elk-mcp-agent
+  ports:
+    - name: http
+      port: 8787
+      targetPort: http

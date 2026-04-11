@@ -1,0 +1,164 @@
+name: Build Ollama Image
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/build-ollama-image.yml"
+      - "ollama/**"
+      - ".dockerignore"
+      - "README.md"
+      - "deploy/README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/build-ollama-image.yml"
+      - "ollama/**"
+      - ".dockerignore"
+      - "README.md"
+      - "deploy/README.md"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Modelo Ollama para preload no startup da imagem"
+        required: false
+        default: "qwen2.5:7b"
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_OLLAMA: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-ollama
+  OLLAMA_PRELOAD_MODEL: ${{ inputs.model || 'qwen2.5:7b' }}
+
+jobs:
+  gitleaks:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  build-and-push:
+    name: Build, scan and push Ollama
+    runs-on: ubuntu-latest
+    needs: gitleaks
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Ollama metadata
+        id: meta_ollama
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME_OLLAMA }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build custom Ollama image for validation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ollama/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            OLLAMA_PRELOAD_MODEL=${{ env.OLLAMA_PRELOAD_MODEL }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }}
+          labels: ${{ steps.meta_ollama.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test custom Ollama image
+        run: |
+          docker run --rm --entrypoint ollama ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }} --version
+
+      - name: Trivy scan custom Ollama OS packages
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          scanners: vuln
+          ignore-unfixed: true
+          vuln-type: os
+          severity: CRITICAL,HIGH
+          version: v0.69.3
+
+      - name: Trivy advisory scan custom Ollama binary
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }}
+          format: table
+          exit-code: "1"
+          scanners: vuln
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          version: v0.69.3
+
+      - name: Build and push custom Ollama image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ollama/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            OLLAMA_PRELOAD_MODEL=${{ env.OLLAMA_PRELOAD_MODEL }}
+          push: true
+          tags: ${{ steps.meta_ollama.outputs.tags }}
+          labels: ${{ steps.meta_ollama.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Usage summary
+        run: |
+          {
+            echo "## Custom Ollama image"
+            echo ""
+            echo "- Image: \`${{ env.IMAGE_NAME_OLLAMA }}\`"
+            echo "- Preload model: \`${{ env.OLLAMA_PRELOAD_MODEL }}\`"
+            echo "- Tags:"
+            echo '${{ steps.meta_ollama.outputs.tags }}' | sed 's/^/- /'
+            echo ""
+            echo "Run:"
+            echo '\`\`\`bash'
+            echo "docker run --rm -p 11434:11434 ${{ env.IMAGE_NAME_OLLAMA }}:sha-${GITHUB_SHA::7}"
+            echo '\`\`\`'
+          } >> "$GITHUB_STEP_SUMMARY"

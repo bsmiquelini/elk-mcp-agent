@@ -60,9 +60,11 @@ export TAG="v1.0.0"
 
 docker build -f agent/Dockerfile -t "${IMAGE_PREFIX}-agent:${TAG}" .
 docker build -f mcp_server/Dockerfile -t "${IMAGE_PREFIX}-mcp:${TAG}" .
+docker build -f ollama/Dockerfile -t "${IMAGE_PREFIX}-ollama:${TAG}" .
 
 docker push "${IMAGE_PREFIX}-agent:${TAG}"
 docker push "${IMAGE_PREFIX}-mcp:${TAG}"
+docker push "${IMAGE_PREFIX}-ollama:${TAG}"
 ```
 
 Se quiser também marcar `latest`:
@@ -70,10 +72,18 @@ Se quiser também marcar `latest`:
 ```bash
 docker tag "${IMAGE_PREFIX}-agent:${TAG}" "${IMAGE_PREFIX}-agent:latest"
 docker tag "${IMAGE_PREFIX}-mcp:${TAG}" "${IMAGE_PREFIX}-mcp:latest"
+docker tag "${IMAGE_PREFIX}-ollama:${TAG}" "${IMAGE_PREFIX}-ollama:latest"
 
 docker push "${IMAGE_PREFIX}-agent:latest"
 docker push "${IMAGE_PREFIX}-mcp:latest"
+docker push "${IMAGE_PREFIX}-ollama:latest"
 ```
+
+No GitHub Actions, os workflows de imagem executam:
+
+- Gitleaks antes do build para barrar secrets versionados.
+- Trivy Action `v0.35.0` com Trivy `v0.69.3` nas imagens carregadas localmente antes do push.
+- Smoke tests de CLI, HTTP, MCP server e Ollama.
 
 ## Cenário 1: VM com Docker
 

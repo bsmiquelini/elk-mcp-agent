@@ -1,0 +1,8 @@
+# Baseline de vazamentos historicos ja removidos do estado atual.
+# Mantem o Gitleaks ativo para novos achados sem reabrir commits antigos.
+6fefb9958ed30497c53d10ee139f40be17b4f7b1:README.md:curl-auth-header:128
+6fefb9958ed30497c53d10ee139f40be17b4f7b1:deploy/README.md:curl-auth-header:172
+b9d0ee4e91993db231e04ec5851d0425b7486580:README.md:curl-auth-header:118
+e18b2246a3de165cce997ed479b7ba2fd2d21539:.env:generic-api-key:8
+e18b2246a3de165cce997ed479b7ba2fd2d21539:.env:generic-api-key:17
+e18b2246a3de165cce997ed479b7ba2fd2d21539:infra/nginx/certs/key.pem:private-key:1

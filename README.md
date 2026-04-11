@@ -92,6 +92,7 @@ As variáveis abaixo podem ser usadas tanto no shell quanto em `--env-file`.
 | `AGENT_HTTP_HOST` | host do serviço |
 | `AGENT_HTTP_PORT` | porta do serviço |
 | `AGENT_HTTP_REQUEST_TIMEOUT` | timeout por request |
+| `AGENT_HTTP_MAX_BODY_BYTES` | limite máximo do payload HTTP |
 | `AGENT_HTTP_JSON_LOGS` | logs estruturados JSON |
 | `AGENT_HTTP_LOG_LEVEL` | nível de log |
 | `AGENT_HTTP_AUTH_ENABLED` | habilita bearer token |
@@ -237,6 +238,13 @@ O `healthcheck` informa se:
 - o Elasticsearch está acessível
 - o provider/modelo de inferência está acessível
 
+Semântica operacional:
+
+- `GET /healthz` retorna `200` quando o processo HTTP está vivo, mesmo se alguma dependência estiver degradada.
+- `GET /readyz` retorna `200` somente quando Elasticsearch e provider/modelo estão acessíveis.
+- `GET /readyz` retorna `503` com `status: not_ready` quando o serviço ainda não deve receber tráfego.
+- Payloads maiores que `AGENT_HTTP_MAX_BODY_BYTES` retornam `413 payload_too_large`.
+
 Exemplo:
 
 ```bash
@@ -289,6 +297,7 @@ python3 scripts/test_ui_rendering.py
 python3 scripts/test_mvp_queries.py
 python3 scripts/test_http_service.py
 python3 scripts/test_http_service_auth.py
+python3 scripts/test_http_readiness_degraded.py
 python3 scripts/test_http_report_service.py
 python3 scripts/test_executive_report_prompts.py
 ```
@@ -299,6 +308,12 @@ Suíte completa:
 python3 scripts/test_full_300_validated.py
 ```
 
+Em máquinas mais lentas ou sob carga, a suíte da CLI permite aumentar o timeout por pergunta sem reduzir a validação de conteúdo:
+
+```bash
+CLI_TEST_TIMEOUT_SECONDS=120 python3 scripts/test_full_300_validated.py
+```
+
 Teste de build das imagens:
 
 ```bash
@@ -306,9 +321,24 @@ docker buildx build --load -t elk-mcp-agent:test -f agent/Dockerfile .
 docker run --rm elk-mcp-agent:test agent/main.py --help
 docker run --rm elk-mcp-agent:test agent/http_service.py --help
 
+docker buildx build --load -t elk-mcp-server:test -f mcp_server/Dockerfile .
+docker run --rm elk-mcp-server:test -m compileall mcp_server
+
 docker buildx build --load -t elk-mcp-ollama:test -f ollama/Dockerfile .
 docker run --rm --entrypoint ollama elk-mcp-ollama:test --version
 ```
+
+Validação local de segurança:
+
+```bash
+docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source=/repo --redact --no-banner
+
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os,library elk-mcp-agent:test
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os,library elk-mcp-server:test
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3 image --scanners vuln --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os elk-mcp-ollama:test
+```
+
+Os workflows de build/push no GitHub Actions executam Gitleaks antes dos builds e Trivy Action `v0.35.0` com Trivy `v0.69.3` nas imagens antes do push para o GHCR. A baseline [.gitleaksignore](/home/bruno/lab_ia/elk-mcp-agent/.gitleaksignore) registra apenas achados históricos já removidos do estado atual.
 
 ## Outras referências
 
