@@ -34,14 +34,27 @@ target "mcp_server" {
   ]
 }
 
+target "ollama" {
+  inherits = ["common"]
+  context = "."
+  dockerfile = "ollama/Dockerfile"
+  args = {
+    OLLAMA_PRELOAD_MODEL = "qwen2.5:7b"
+  }
+  tags = [
+    "${REGISTRY}/${IMAGE_NAMESPACE}/ollama:${VERSION}",
+    "${REGISTRY}/${IMAGE_NAMESPACE}/ollama:latest",
+  ]
+}
+
 group "images" {
-  targets = ["agent", "mcp_server"]
+  targets = ["agent", "mcp_server", "ollama"]
 }
 
 group "default" {
-  targets = ["agent", "mcp_server"]
+  targets = ["agent", "mcp_server", "ollama"]
 }
 
 group "release" {
-  targets = ["agent", "mcp_server"]
+  targets = ["agent", "mcp_server", "ollama"]
 }

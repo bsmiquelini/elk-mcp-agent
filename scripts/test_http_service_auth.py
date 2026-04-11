@@ -65,7 +65,9 @@ def main():
     )
 
     try:
-        wait_health(f"http://127.0.0.1:{port}/healthz")
+        health = wait_health(f"http://127.0.0.1:{port}/healthz")
+        if "checks" not in health:
+            raise RuntimeError(f"Healthcheck sem checks: {health}")
 
         status, payload = post(
             f"http://127.0.0.1:{port}/v1/ask",

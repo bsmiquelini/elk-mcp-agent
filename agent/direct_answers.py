@@ -1124,7 +1124,7 @@ def _is_executed_jobs_question(q: str) -> bool:
     mentions_job = any(term in q for term in ["job", "jobs", "check", "checks"])
     asks_listing = any(term in q for term in ["quais", "lista", "lista os", "mostre"])
     asks_execution = any(term in q for term in ["execut", "rod", "rodaram", "rodou"])
-    filters = ["build", "deploy", "security", "scan", "java", "python", "typescript", "node", "prd", "hml", "stg", "dev", "sandbox", "topico", "branch", "privado", "publico", "falha", "falhas", "sucesso", "taxa", "duracao", "tempo", "time", "vskey", "api", "srv", "bff", "apim"]
+    filters = ["build", "deploy", "rollback", "security", "scan", "java", "python", "typescript", "node", "prd", "hml", "stg", "dev", "sandbox", "topico", "branch", "privado", "publico", "falha", "falhas", "sucesso", "taxa", "duracao", "tempo", "time", "vskey", "api", "srv", "bff", "apim"]
     return mentions_job and asks_listing and asks_execution and not any(term in q for term in filters)
 
 
@@ -1132,7 +1132,7 @@ def _is_executed_workflows_question(q: str) -> bool:
     mentions_workflow = any(term in q for term in ["workflow", "workflows"])
     asks_listing = any(term in q for term in ["quais", "lista", "lista os", "mostre"])
     asks_execution = any(term in q for term in ["execut", "rod", "rodaram", "rodou"])
-    other_dimensions = ["repositorio", "repositorios", "repo", "analista", "analistas", "linguagem", "linguagens", "topico", "topicos", "branch", "branches", "ambiente", "ambientes", "java", "python", "typescript", "node", "prd", "hml", "stg", "dev", "sandbox", "privado", "publico", "build", "deploy", "security", "scan", "time", "vskey", "api", "srv", "bff", "apim"]
+    other_dimensions = ["repositorio", "repositorios", "repo", "analista", "analistas", "linguagem", "linguagens", "topico", "topicos", "branch", "branches", "ambiente", "ambientes", "java", "python", "typescript", "node", "prd", "hml", "stg", "dev", "sandbox", "privado", "publico", "build", "deploy", "rollback", "security", "scan", "time", "vskey", "api", "srv", "bff", "apim"]
     return (
         mentions_workflow
         and asks_listing
@@ -1265,6 +1265,10 @@ def _is_average_rollback_duration_question(q: str) -> bool:
 
 
 def _is_rollback_inventory_question(q: str) -> bool:
+    if any(term in q for term in ["job", "jobs", "check", "checks", "step", "steps"]):
+        return False
+    if any(term in q for term in ["mais execut", "menos execut", "maior taxa", "menor taxa", "mais falh", "taxa de sucesso"]):
+        return False
     return "rollback" in q and any(term in q for term in ["quais", "liste", "lista", "mostre", "informe"]) and any(
         term in q for term in ["realizaram", "executaram", "ocorreram", "tiveram"]
     ) and not _is_multiple_rollback_question(q)
@@ -2953,6 +2957,8 @@ async def _answer_first_dev_to_prd_gap(
     if not repo_field or not time_field or not deploy_indicator_field or not deploy_value:
         return None
     filters, any_filters, filter_labels = _extract_business_filters(_plain_text(question), config, profile, "workflow")
+    filters, any_filters = _remove_environment_filters(filters, any_filters, profile)
+    filter_labels = [label for label in filter_labels if "ambiente" not in label.lower()]
     filters[deploy_indicator_field] = deploy_value
     docs = await _fetch_documents(
         mcp_session,
@@ -3014,6 +3020,8 @@ async def _answer_dev_deploys_before_promotion(
         return None
     target_env = "PRD" if "prd" in _plain_text(question) else "HML"
     filters, any_filters, filter_labels = _extract_business_filters(_plain_text(question), config, profile, "workflow")
+    filters, any_filters = _remove_environment_filters(filters, any_filters, profile)
+    filter_labels = [label for label in filter_labels if "ambiente" not in label.lower()]
     filters[deploy_indicator_field] = deploy_value
     docs = await _fetch_documents(
         mcp_session,

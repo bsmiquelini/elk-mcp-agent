@@ -76,27 +76,53 @@ def _resolve_env_vars(obj):
 def _apply_environment_overrides(config: dict) -> dict:
     es_cfg = config.setdefault("elasticsearch", {})
     agent_cfg = config.setdefault("agent", {})
+    if os.getenv("ELASTICSEARCH_URL"):
+        es_cfg["url"] = os.getenv("ELASTICSEARCH_URL")
+    if os.getenv("ELASTICSEARCH_USERNAME"):
+        es_cfg["username"] = os.getenv("ELASTICSEARCH_USERNAME")
+    if os.getenv("ELASTIC_PASSWORD"):
+        es_cfg["password"] = os.getenv("ELASTIC_PASSWORD")
+    if os.getenv("ELASTICSEARCH_INDEX"):
+        es_cfg["index"] = os.getenv("ELASTICSEARCH_INDEX")
+    if os.getenv("ELASTICSEARCH_API_KEY"):
+        es_cfg["api_key"] = os.getenv("ELASTICSEARCH_API_KEY")
+    if os.getenv("ELASTICSEARCH_AUTH_MODE"):
+        es_cfg["auth_mode"] = os.getenv("ELASTICSEARCH_AUTH_MODE")
+    if os.getenv("ELASTICSEARCH_CA_CERTS"):
+        es_cfg["ca_certs"] = os.getenv("ELASTICSEARCH_CA_CERTS")
+    if os.getenv("ELASTICSEARCH_CLIENT_CERT"):
+        es_cfg["client_cert"] = os.getenv("ELASTICSEARCH_CLIENT_CERT")
+    if os.getenv("ELASTICSEARCH_CLIENT_KEY"):
+        es_cfg["client_key"] = os.getenv("ELASTICSEARCH_CLIENT_KEY")
+    if os.getenv("ELASTICSEARCH_SSL_FINGERPRINT"):
+        es_cfg["ssl_assert_fingerprint"] = os.getenv("ELASTICSEARCH_SSL_FINGERPRINT")
 
-    env_map = {
-        ("elasticsearch", "url"): os.getenv("ELASTICSEARCH_URL"),
-        ("elasticsearch", "username"): os.getenv("ELASTICSEARCH_USERNAME"),
-        ("elasticsearch", "password"): os.getenv("ELASTIC_PASSWORD"),
-        ("elasticsearch", "index"): os.getenv("ELASTICSEARCH_INDEX"),
-        ("agent", "provider"): os.getenv("AGENT_PROVIDER"),
-        ("agent", "api_base"): os.getenv("OLLAMA_API_BASE"),
-        ("agent", "model"): os.getenv("OLLAMA_MODEL"),
-        ("agent", "ollama_model"): os.getenv("OLLAMA_MODEL"),
-        ("agent", "api_key"): os.getenv("GROQ_API_KEY"),
-        ("agent", "model"): os.getenv("LLM_MODEL"),
-    }
-
-    for (section, key), value in env_map.items():
-        if value:
-            config.setdefault(section, {})[key] = value
+    if os.getenv("AGENT_PROVIDER"):
+        agent_cfg["provider"] = os.getenv("AGENT_PROVIDER")
+    if os.getenv("OLLAMA_API_BASE"):
+        agent_cfg["api_base"] = os.getenv("OLLAMA_API_BASE")
+    if os.getenv("OLLAMA_MODEL"):
+        agent_cfg["ollama_model"] = os.getenv("OLLAMA_MODEL")
+        if not os.getenv("LLM_MODEL"):
+            agent_cfg["model"] = os.getenv("OLLAMA_MODEL")
+    if os.getenv("GROQ_API_KEY"):
+        agent_cfg["api_key"] = os.getenv("GROQ_API_KEY")
+    if os.getenv("LLM_MODEL"):
+        agent_cfg["model"] = os.getenv("LLM_MODEL")
 
     verify_ssl = os.getenv("ELASTICSEARCH_VERIFY_SSL")
     if verify_ssl is not None and verify_ssl != "":
         es_cfg["verify_ssl"] = verify_ssl.strip().lower() in {"1", "true", "yes", "on"}
+
+    skip_tls = os.getenv("ELASTICSEARCH_SKIP_TLS_VERIFY")
+    if skip_tls is not None and skip_tls != "":
+        es_cfg["skip_tls_verify"] = skip_tls.strip().lower() in {"1", "true", "yes", "on"}
+        if es_cfg["skip_tls_verify"]:
+            es_cfg["verify_ssl"] = False
+
+    assert_hostname = os.getenv("ELASTICSEARCH_SSL_ASSERT_HOSTNAME")
+    if assert_hostname is not None and assert_hostname != "":
+        es_cfg["ssl_assert_hostname"] = assert_hostname.strip().lower() in {"1", "true", "yes", "on"}
 
     timeout = os.getenv("ELASTICSEARCH_TIMEOUT")
     if timeout:

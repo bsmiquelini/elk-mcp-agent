@@ -4,7 +4,7 @@ Esta pasta concentra os artefatos práticos de publicação do projeto.
 
 ## Estrutura
 
-- `docker-bake.hcl`: build/push das imagens do `agent` e do `mcp_server`
+- `docker-bake.hcl`: build/push das imagens do `agent`, `mcp_server` e `ollama`
 - `env/production.env.example`: exemplo de variáveis para produção
 - `k8s/`: manifests Kubernetes prontos para adaptação
 - `helm/`: exemplos de `values.yaml` para Helm
@@ -42,12 +42,13 @@ docker buildx bake -f deploy/docker-bake.hcl release --push
 
 ## Build e push via GitHub Actions
 
-O workflow [build-agent-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-agent-image.yml) publica a imagem do agente no GHCR usando o `GITHUB_TOKEN` do repositório.
+O workflow [build-agent-image.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/build-agent-image.yml) publica as imagens do agente e do Ollama customizado no GHCR usando o `GITHUB_TOKEN` do repositório.
 
-Imagem publicada:
+Imagens publicadas:
 
 ```bash
 ghcr.io/<owner>/elk-mcp-agent-agent
+ghcr.io/<owner>/elk-mcp-agent-ollama
 ```
 
 Tags geradas:
@@ -60,6 +61,7 @@ Validações aplicadas antes do push:
 - build da imagem em modo local no runner
 - smoke do modo CLI com `agent/main.py --help`
 - smoke do modo HTTP com `agent/http_service.py --help`
+- smoke da imagem Ollama com `ollama --version`
 
 Boas práticas da imagem:
 - `Dockerfile` multi-stage
@@ -82,10 +84,19 @@ docker run --rm -p 8787:8787 \
   agent/http_service.py --host 0.0.0.0 --port 8787
 ```
 
+Uso do Ollama customizado:
+
+```bash
+docker run --rm -p 11434:11434 \
+  -e OLLAMA_PRELOAD_MODEL=qwen2.5:7b \
+  ghcr.io/<owner>/elk-mcp-agent-ollama:develop
+```
+
 ## CI antes do publish
 
 O workflow [ci-agent.yml](/home/bruno/lab_ia/elk-mcp-agent/.github/workflows/ci-agent.yml) valida:
 - compilacao e testes rapidos do agente
+- opcoes de conexao Elasticsearch com HTTPS, API key e skip TLS
 - integracao com Elasticsearch seeded
 - smoke do modo CLI
 - smoke do modo HTTP
@@ -146,12 +157,25 @@ Os exemplos usam charts externos para Ollama e um chart hipotético para o `agen
 Exemplo de variáveis:
 
 ```bash
+ELASTICSEARCH_URL=https://elk-prod.exemplo.intra:9200
+ELASTICSEARCH_AUTH_MODE=api_key
+ELASTICSEARCH_API_KEY=base64-api-key
+ELASTICSEARCH_VERIFY_SSL=true
+ELASTICSEARCH_CA_CERTS=/etc/ssl/certs/empresa-ca.pem
+
 AGENT_PROVIDER=openai_compatible
 LLM_API_BASE=https://llm-gateway.exemplo.intra/v1
 LLM_MODEL=qwen2.5-72b-instruct
 LLM_API_KEY=
 LLM_AUTH_HEADER=Authorization
 LLM_AUTH_SCHEME=Bearer
+```
+
+Para laboratórios com certificado self-signed, use:
+
+```bash
+ELASTICSEARCH_SKIP_TLS_VERIFY=true
+ELASTICSEARCH_VERIFY_SSL=false
 ```
 
 Esse modo é o mais indicado quando:

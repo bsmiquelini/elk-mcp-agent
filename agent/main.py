@@ -70,7 +70,14 @@ async def main():
 
     if interface_cfg.get("show_startup_checks", False):
         console.print("\n[dim cyan]🔍 Verificando pré-requisitos...[/dim cyan]")
-    check_provider(config, fatal=False)
+    check_provider(
+        config,
+        fatal=False,
+        emit_output=bool(
+            interface_cfg.get("show_provider_status", False)
+            or interface_cfg.get("show_startup_checks", False)
+        ),
+    )
 
     try:
         async with open_agent_runtime(str(config_path)) as runtime:

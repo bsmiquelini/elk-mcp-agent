@@ -57,6 +57,9 @@ jobs:
       - name: Validate provider gateway adapter
         run: python3 scripts/test_llm_provider_gateway.py
 
+      - name: Validate Elasticsearch connection options
+        run: python3 scripts/test_elasticsearch_connection_options.py
+
       - name: Validate UI rendering
         run: python3 scripts/test_ui_rendering.py
 

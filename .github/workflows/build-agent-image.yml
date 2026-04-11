@@ -1,4 +1,4 @@
-name: Build Agent Container
+name: Build Runtime Images
 
 on:
   push:
@@ -14,9 +14,12 @@ on:
       - "scripts/**"
       - "config.yaml"
       - "agent/Dockerfile"
+      - "ollama/**"
       - "mcp_server/requirements.txt"
       - "agent/requirements.txt"
       - "scripts/requirements-seed.txt"
+      - ".dockerignore"
+      - "README.md"
   pull_request:
     paths:
       - ".github/workflows/build-agent-image.yml"
@@ -25,9 +28,12 @@ on:
       - "scripts/**"
       - "config.yaml"
       - "agent/Dockerfile"
+      - "ollama/**"
       - "mcp_server/requirements.txt"
       - "agent/requirements.txt"
       - "scripts/requirements-seed.txt"
+      - ".dockerignore"
+      - "README.md"
   workflow_dispatch:
 
 permissions:
@@ -36,7 +42,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-agent
+  IMAGE_NAME_AGENT: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-agent
+  IMAGE_NAME_OLLAMA: ghcr.io/${{ github.repository_owner }}/elk-mcp-agent-ollama
 
 jobs:
   build-and-push:
@@ -60,11 +67,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
+      - name: Extract agent metadata
+        id: meta_agent
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_NAME_AGENT }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Extract ollama metadata
+        id: meta_ollama
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME_OLLAMA }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -80,18 +98,37 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: ${{ env.IMAGE_NAME }}:ci-${{ github.sha }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.IMAGE_NAME_AGENT }}:ci-${{ github.sha }}
+          labels: ${{ steps.meta_agent.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke test CLI mode
         run: |
-          docker run --rm ${{ env.IMAGE_NAME }}:ci-${{ github.sha }} agent/main.py --help
+          docker run --rm ${{ env.IMAGE_NAME_AGENT }}:ci-${{ github.sha }} agent/main.py --help
 
       - name: Smoke test HTTP mode
         run: |
-          docker run --rm ${{ env.IMAGE_NAME }}:ci-${{ github.sha }} agent/http_service.py --help
+          docker run --rm ${{ env.IMAGE_NAME_AGENT }}:ci-${{ github.sha }} agent/http_service.py --help
+
+      - name: Build custom Ollama image for validation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ollama/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            OLLAMA_PRELOAD_MODEL=qwen2.5:7b
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }}
+          labels: ${{ steps.meta_ollama.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test custom Ollama image
+        run: |
+          docker run --rm --entrypoint ollama ${{ env.IMAGE_NAME_OLLAMA }}:ci-${{ github.sha }} --version
 
       - name: Build and push agent image
         if: github.event_name != 'pull_request'
@@ -101,27 +138,50 @@ jobs:
           file: agent/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_agent.outputs.tags }}
+          labels: ${{ steps.meta_agent.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push custom Ollama image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ollama/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            OLLAMA_PRELOAD_MODEL=qwen2.5:7b
+          push: true
+          tags: ${{ steps.meta_ollama.outputs.tags }}
+          labels: ${{ steps.meta_ollama.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Usage summary
         run: |
           {
-            echo "## Agent image"
+            echo "## Runtime images"
             echo ""
-            echo "- Image: \`${{ env.IMAGE_NAME }}\`"
-            echo "- Tags:"
-            echo '${{ steps.meta.outputs.tags }}' | sed 's/^/- /'
+            echo "- Agent image: \`${{ env.IMAGE_NAME_AGENT }}\`"
+            echo "- Ollama image: \`${{ env.IMAGE_NAME_OLLAMA }}\`"
+            echo "- Agent tags:"
+            echo '${{ steps.meta_agent.outputs.tags }}' | sed 's/^/- /'
+            echo "- Ollama tags:"
+            echo '${{ steps.meta_ollama.outputs.tags }}' | sed 's/^/- /'
             echo ""
             echo "CLI:"
             echo '\`\`\`bash'
-            echo "docker run --rm -it ${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7}"
+            echo "docker run --rm -it ${{ env.IMAGE_NAME_AGENT }}:sha-${GITHUB_SHA::7}"
             echo '\`\`\`'
             echo ""
             echo "HTTP service:"
             echo '\`\`\`bash'
-            echo "docker run --rm -p 8787:8787 ${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA::7} agent/http_service.py --host 0.0.0.0 --port 8787"
+            echo "docker run --rm -p 8787:8787 ${{ env.IMAGE_NAME_AGENT }}:sha-${GITHUB_SHA::7} agent/http_service.py --host 0.0.0.0 --port 8787"
+            echo '\`\`\`'
+            echo ""
+            echo "Custom Ollama:"
+            echo '\`\`\`bash'
+            echo "docker run --rm -p 11434:11434 ${{ env.IMAGE_NAME_OLLAMA }}:sha-${GITHUB_SHA::7}"
             echo '\`\`\`'
           } >> "$GITHUB_STEP_SUMMARY"

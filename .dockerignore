@@ -1,5 +1,11 @@
 .git
 .venv
+venv
+bin
+include
+lib
+lib64
+pyvenv.cfg
 __pycache__
 *.pyc
 .pytest_cache

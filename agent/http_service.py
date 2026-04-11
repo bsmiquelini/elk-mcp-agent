@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "mcp_server"))
 from config_loader import load_config
 from executive_report import generate_sections, parse_include_sections, render_report, slugify
 from logging_utils import get_logger, log_event
-from provider_health import check_provider
 from runtime import AgentRuntimeWorker, CONFIG_PATH
+from service_health import get_elasticsearch_status, get_provider_status
 
 
 def _json_bytes(payload: dict) -> bytes:
@@ -69,9 +69,23 @@ def _build_handler(config_path: str):
         json_output=bool(service_cfg.get("json_logs", True)),
         level=str(service_cfg.get("log_level", "INFO")),
     )
+    provider_status = get_provider_status(config)
+    elasticsearch_status = get_elasticsearch_status(config)
+    log_event(
+        logger,
+        "info",
+        "http_service_bootstrap",
+        provider=provider_status.get("provider"),
+        provider_ready=provider_status.get("ready"),
+        provider_model=provider_status.get("model"),
+        provider_endpoint=provider_status.get("endpoint"),
+        elasticsearch_ready=elasticsearch_status.get("ready"),
+        elasticsearch_url=elasticsearch_status.get("url"),
+        elasticsearch_auth_mode=elasticsearch_status.get("auth_mode"),
+    )
     runtime_worker = AgentRuntimeWorker(config_path)
     runtime_worker.start()
-    log_event(logger, "info", "runtime_started")
+    log_event(logger, "info", "runtime_started", schema_cache_ttl_seconds=config.get("agent", {}).get("runtime", {}).get("schema_cache_ttl_seconds", 0))
 
     class AgentHandler(BaseHTTPRequestHandler):
         server_version = "ELKMCPAgentHTTP/1.0"
@@ -105,23 +119,30 @@ def _build_handler(config_path: str):
             if route not in ("/healthz", "/readyz"):
                 self._send_json(404, {"error": "not_found"})
                 return
-            provider_ok = check_provider(config, fatal=False)
+            provider_ok = get_provider_status(config)
+            elastic_ok = get_elasticsearch_status(config)
+            ready = bool(provider_ok.get("ready") and elastic_ok.get("ready"))
             log_event(
                 logger,
                 "info",
                 "healthcheck",
                 route=route,
                 request_id=request_id,
-                provider_ready=provider_ok,
+                provider_ready=provider_ok.get("ready"),
+                elasticsearch_ready=elastic_ok.get("ready"),
             )
             self._send_json(
                 200,
                 {
                     "status": "ok",
-                    "ready": provider_ok,
+                    "ready": ready,
                     "service": domain_name,
                     "request_id": request_id,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "checks": {
+                        "provider": provider_ok,
+                        "elasticsearch": elastic_ok,
+                    },
                 },
             )
 
@@ -147,6 +168,15 @@ def _build_handler(config_path: str):
 
             question = str(payload.get("question") or "").strip()
             prompt = str(payload.get("prompt") or "").strip()
+            log_event(
+                logger,
+                "info",
+                "request_received",
+                route=route,
+                request_id=request_id,
+                question_length=len(question),
+                prompt_length=len(prompt),
+            )
 
             if route == "/v1/ask" and not question:
                 self._send_json(400, {"error": "question_required"})
@@ -227,6 +257,7 @@ def _build_handler(config_path: str):
             )
 
     AgentHandler.runtime_worker = runtime_worker
+    AgentHandler.service_logger = logger
     return AgentHandler
 
 
@@ -241,7 +272,9 @@ def main():
     args = parser.parse_args()
 
     handler = _build_handler(args.config)
+    logger = getattr(handler, "service_logger", get_logger("agent.http.bootstrap"))
     server = ThreadingHTTPServer((args.host, args.port), handler)
+    log_event(logger, "info", "http_service_listening", host=args.host, port=args.port, config=args.config)
     print(f"ELK MCP Agent HTTP listening on http://{args.host}:{args.port}")
     try:
         server.serve_forever()

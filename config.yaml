@@ -6,7 +6,15 @@ elasticsearch:
   url:        "http://localhost:9200"
   username:   "elastic"
   password:   "changeme123"
+  auth_mode: "auto"
+  api_key:    ""
   verify_ssl: false
+  skip_tls_verify: false
+  ca_certs:   ""
+  client_cert: ""
+  client_key: ""
+  ssl_assert_hostname: true
+  ssl_assert_fingerprint: ""
   timeout:    30
   index:      "github-workflows*"
   time_field: "@timestamp"

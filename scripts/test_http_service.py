@@ -64,6 +64,9 @@ def main():
         health = wait_health(f"http://127.0.0.1:{port}/healthz")
         if health.get("status") != "ok":
             raise RuntimeError(f"Healthcheck invalido: {health}")
+        checks = health.get("checks") or {}
+        if "provider" not in checks or "elasticsearch" not in checks:
+            raise RuntimeError(f"Checks ausentes no healthcheck: {health}")
 
         response = post_json(
             f"http://127.0.0.1:{port}/v1/ask",
