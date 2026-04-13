@@ -1,33 +1,35 @@
 #!/bin/sh
 set -eu
 
-cleanup() {
-  if [ -n "${OLLAMA_PID:-}" ]; then
-    kill "${OLLAMA_PID}" >/dev/null 2>&1 || true
-    wait "${OLLAMA_PID}" >/dev/null 2>&1 || true
-  fi
-}
+ollama serve &
+pid="$!"
 
+cleanup() {
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
 trap cleanup INT TERM EXIT
 
-echo "[ollama-entrypoint] starting ollama server on ${OLLAMA_HOST:-0.0.0.0}:11434"
-ollama serve &
-OLLAMA_PID="$!"
-
-for attempt in $(seq 1 60); do
-  if ollama list >/dev/null 2>&1; then
-    break
+i=0
+until curl -fsS http://127.0.0.1:11434/api/version >/dev/null 2>&1; do
+  i=$((i+1))
+  if [ "$i" -ge 120 ]; then
+    echo "Ollama não ficou pronto no startup" >&2
+    exit 1
   fi
   sleep 1
 done
 
-if [ -n "${OLLAMA_PRELOAD_MODEL:-}" ]; then
-  if ! ollama list | awk 'NR>1 {print $1}' | grep -Fx "${OLLAMA_PRELOAD_MODEL}" >/dev/null 2>&1; then
-    echo "[ollama-entrypoint] preloading model ${OLLAMA_PRELOAD_MODEL}"
-    ollama pull "${OLLAMA_PRELOAD_MODEL}"
-  else
-    echo "[ollama-entrypoint] model ${OLLAMA_PRELOAD_MODEL} already present"
-  fi
+# Garante que o modelo exista localmente.
+# Em teoria já veio da imagem, mas isso protege contra corrupção ou troca de tag.
+if ! ollama list | awk '{print $1}' | grep -Fxq "$OLLAMA_PRELOAD_MODEL"; then
+  ollama pull "$OLLAMA_PRELOAD_MODEL"
 fi
 
-wait "${OLLAMA_PID}"
+# Aquece o modelo em memória.
+curl -fsS http://127.0.0.1:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"${OLLAMA_PRELOAD_MODEL}\",\"prompt\":\"\",\"stream\":false,\"keep_alive\":\"${OLLAMA_KEEP_ALIVE}\"}" \
+  >/dev/null || true
+
+wait "$pid"
