@@ -11,7 +11,7 @@ ENV OLLAMA_HOST=0.0.0.0 \
 
 COPY ollama/entrypoint.sh /usr/local/bin/ollama-entrypoint.sh
 
-RUN chmod 0755 /usr/local/bin/ollama-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/ollama-entrypoint.sh && ollama pull $OLLAMA_PRELOAD_MODEL
 
 EXPOSE 11434
 
