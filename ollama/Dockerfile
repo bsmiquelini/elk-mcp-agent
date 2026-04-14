@@ -35,10 +35,5 @@ ENV OLLAMA_HOST=0.0.0.0:11434 \
     OLLAMA_PRELOAD_MODEL=${OLLAMA_PRELOAD_MODEL}
 
 COPY --from=model-fetch /root/.ollama /root/.ollama
-COPY ollama/entrypoint.sh /usr/local/bin/ollama-entrypoint.sh
-
-RUN chmod 0755 /usr/local/bin/ollama-entrypoint.sh
 
 EXPOSE 11434
-
-ENTRYPOINT ["/usr/local/bin/ollama-entrypoint.sh"]
