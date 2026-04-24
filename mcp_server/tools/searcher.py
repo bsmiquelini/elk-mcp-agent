@@ -6,6 +6,7 @@ Suporta campos nested, ordenação e seleção de campos.
 
 from elastic_client import get_client, get_index
 from schema_utils import build_filter_clause, get_nested_path, load_index_schema, resolve_exact_field
+from tools.time_filters import build_time_range_clause
 
 
 def search(
@@ -14,6 +15,7 @@ def search(
     any_filters:    dict = None,
     nested_filters: dict = None,
     time_range:     str  = None,
+    time_field:     str  = None,
     fields:         list = None,
     sort:           str  = None,
     limit:          int  = 10,
@@ -22,13 +24,13 @@ def search(
     es           = get_client(config)
     index        = get_index(config)
     schema       = load_index_schema(config, es=es, index=index)
-    time_field   = config.get("elasticsearch", {}).get("time_field", "workflow_run.started_at")
+    time_field   = time_field or config.get("elasticsearch", {}).get("time_field", "workflow_run.started_at")
     time_range   = time_range or config.get("elasticsearch", {}).get("default_time_range", "7d")
     filters      = filters or {}
     any_filters  = any_filters or {}
     limit        = min(limit, 200)
 
-    must = [{"range": {time_field: {"gte": f"now-{time_range}", "lte": "now"}}}]
+    must = [build_time_range_clause(time_field, time_range)]
     should = []
 
     for f, v in filters.items():
@@ -86,6 +88,7 @@ def search(
             "total":      total,
             "shown":      len(documents),
             "time_range": time_range,
+            "time_field": time_field,
             "filters":    filters,
             "any_filters": any_filters,
             "documents":  documents,

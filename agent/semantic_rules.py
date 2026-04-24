@@ -42,23 +42,16 @@ def extract_architecture_filter(question: str, config: dict, topic_field: str | 
 
     q = plain_text(question)
     rules = get_rules(config).get("architecture", {})
-    known_values = {plain_text(value) for value in rules.get("known_values", [])}
     aliases = [plain_text(alias) for alias in rules.get("aliases", ["arquitetura", "arquiteturas", "architecture", "architectures"])]
-    value = _extract_named_value(q, aliases) if _contains_alias(q, aliases) else None
-    if value and known_values and value not in known_values:
-        value = None
+    explicit_aliases = [alias for alias in aliases if alias not in {"esteira", "esteiras", "workflow", "workflows", "pipeline", "pipelines"}]
+    value = _extract_named_value(q, explicit_aliases) if _contains_alias(q, explicit_aliases) else None
     if not value:
         implicit_matches = re.findall(
-            r"(?:esteiras?|workflows?|pipelines?|repositorios?|repos?)\s+(?:de|do|da|dos|das)\s+([a-z0-9_-]+)",
+            r"(?:esteiras?|workflows?|pipelines?|repositorios?|repos?)\s+(?:de|do|da|dos|das)\s+([a-z0-9._/-]+)",
             q,
         )
         for candidate in implicit_matches:
-            if candidate in (known_values or {"api", "srv", "bff", "apim"}):
-                value = candidate
-                break
-    if not value:
-        for candidate in list(known_values or {"apim", "api", "srv", "bff"}):
-            if re.search(rf"\b{re.escape(candidate)}\b", q) and _contains_alias(q, aliases):
+            if candidate not in _NAMED_VALUE_STOPWORDS:
                 value = candidate
                 break
     if not value:
@@ -133,19 +126,12 @@ def _wildcards_for_tokens(tokens: list[str]) -> list[str]:
 
 
 def _extract_named_value(question: str, aliases: list[str]) -> str | None:
-    stopwords = {
-        "que", "ja", "já", "executaram", "executou", "rodaram", "rodou", "tiveram", "teve",
-        "mais", "menos", "maior", "menor", "ultimo", "ultimos", "ultima", "ultimas",
-        "falharam", "falhou", "sucesso", "deploy", "build", "workflow", "workflows",
-        "esteira", "esteiras", "pipeline", "pipelines", "trabalham", "trabalha", "trabalhando",
-        "entrega", "entrega", "primeiro", "primeira", "ultima", "última",
-    }
     for alias in aliases:
-        pattern = rf"{re.escape(alias)}(?:\s+de|\s+do|\s+da|\s+dos|\s+das)?\s+([a-z0-9_-]+)"
+        pattern = rf"{re.escape(alias)}(?:\s+de|\s+do|\s+da|\s+dos|\s+das)?\s+([a-z0-9._/-]+)"
         match = re.search(pattern, question)
         if match:
             candidate = match.group(1)
-            if candidate not in stopwords:
+            if candidate not in _NAMED_VALUE_STOPWORDS:
                 return candidate
     return None
 
@@ -162,3 +148,91 @@ def _dedupe(values: list[str]) -> list[str]:
             seen.add(value)
             result.append(value)
     return result
+
+
+_NAMED_VALUE_STOPWORDS = {
+    "que",
+    "ja",
+    "executaram",
+    "executou",
+    "rodaram",
+    "rodou",
+    "tiveram",
+    "teve",
+    "mais",
+    "menos",
+    "maior",
+    "menor",
+    "ultimo",
+    "ultimos",
+    "ultima",
+    "ultimas",
+    "falharam",
+    "falhou",
+    "falha",
+    "falhas",
+    "sucesso",
+    "deploy",
+    "build",
+    "rollback",
+    "security",
+    "scan",
+    "gate",
+    "approval",
+    "test",
+    "tests",
+    "workflow",
+    "workflows",
+    "esteira",
+    "esteiras",
+    "pipeline",
+    "pipelines",
+    "trabalham",
+    "trabalha",
+    "trabalhando",
+    "entrega",
+    "primeiro",
+    "primeira",
+    "apresenta",
+    "apresentam",
+    "erro",
+    "erros",
+    "topico",
+    "topicos",
+    "topic",
+    "topics",
+    "linguagem",
+    "linguagens",
+    "tecnologia",
+    "tecnologias",
+    "time",
+    "times",
+    "squad",
+    "squads",
+    "vskey",
+    "vskeys",
+    "branch",
+    "branches",
+    "repositorio",
+    "repositorios",
+    "repo",
+    "repos",
+    "existe",
+    "existem",
+    "existir",
+    "existentes",
+    "disponivel",
+    "disponiveis",
+    "ambiente",
+    "ambientes",
+    "hoje",
+    "atual",
+    "atuais",
+    "atualmente",
+    "diferente",
+    "diferentes",
+    "distinto",
+    "distintos",
+    "distinta",
+    "distintas",
+}

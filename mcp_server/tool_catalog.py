@@ -36,8 +36,12 @@ def list_tool_specs() -> list[Tool]:
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "Período. Ex: 1d, 7d, 30d, 90d",
+                        "description": "Período. Ex: 1d, 7d, 30d, 2026-04-23, 2026-04-01..2026-04-23",
                         "default": "30d",
+                    },
+                    "time_field": {
+                        "type": "string",
+                        "description": "Campo temporal a usar no range. Ex: workflow_run.run_started_at, @timestamp",
                     },
                     "filters": {
                         "type": "object",
@@ -77,8 +81,12 @@ def list_tool_specs() -> list[Tool]:
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "Período. Ex: 1d, 7d, 30d, 90d",
+                        "description": "Período. Ex: 1d, 7d, 30d, 2026-04-23, 2026-04-01..2026-04-23",
                         "default": "7d",
+                    },
+                    "time_field": {
+                        "type": "string",
+                        "description": "Campo temporal a usar no range. Ex: workflow_run.run_started_at, @timestamp",
                     },
                     "filters": {
                         "type": "object",
@@ -139,8 +147,12 @@ def list_tool_specs() -> list[Tool]:
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "Período. Ex: 1d, 7d, 30d, 90d",
+                        "description": "Período. Ex: 1d, 7d, 30d, 2026-04-23, 2026-04-01..2026-04-23",
                         "default": "7d",
+                    },
+                    "time_field": {
+                        "type": "string",
+                        "description": "Campo temporal a usar no range. Ex: workflow_run.run_started_at, @timestamp",
                     },
                     "fields": {
                         "type": "array",
@@ -175,6 +187,7 @@ def build_handlers(config: dict) -> dict:
             config,
             field=a["field"],
             time_range=a.get("time_range"),
+            time_field=a.get("time_field"),
             filters=a.get("filters", {}),
             size=a.get("size", 200),
         ),
@@ -184,6 +197,7 @@ def build_handlers(config: dict) -> dict:
             field=a["field"],
             group_by=a.get("group_by"),
             time_range=a.get("time_range"),
+            time_field=a.get("time_field"),
             filters=a.get("filters", {}),
             any_filters=a.get("any_filters", {}),
             interval=a.get("interval"),
@@ -197,6 +211,7 @@ def build_handlers(config: dict) -> dict:
             any_filters=a.get("any_filters", {}),
             nested_filters=a.get("nested_filters", {}),
             time_range=a.get("time_range"),
+            time_field=a.get("time_field"),
             fields=a.get("fields"),
             sort=a.get("sort"),
             limit=a.get("limit", 10),

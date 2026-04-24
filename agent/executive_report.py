@@ -21,6 +21,10 @@ from ui_theme import (
 )
 
 
+def plain_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.lower()).strip()
+
+
 def slugify(value: str) -> str:
     text = value.lower().strip()
     text = re.sub(r"[^a-z0-9]+", "-", text)
@@ -52,20 +56,57 @@ def parse_include_sections(value: str | None, config: dict) -> list[str]:
     return [item.strip().lower() for item in value.split(",") if item.strip()]
 
 
+def _dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        normalized = plain_text(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
+def _extract_named_values(prompt: str, aliases: list[str]) -> list[str]:
+    prompt_low = plain_text(prompt)
+    values = []
+    for alias in aliases:
+        pattern = rf"{re.escape(alias)}(?:\s+de|\s+do|\s+da|\s+dos|\s+das|:)?\s+([a-z0-9+#._/-]+)"
+        values.extend(match.group(1) for match in re.finditer(pattern, prompt_low))
+    return _dedupe(values)
+
+
 def extract_architectures(prompt: str) -> list[str]:
-    prompt_low = prompt.lower()
-    architectures = []
-    for arch in ["api", "srv", "bff", "apim"]:
-        if re.search(rf"\b{re.escape(arch)}\b", prompt_low):
-            architectures.append(arch)
-    return architectures
+    prompt_low = plain_text(prompt)
+    values = _extract_named_values(prompt_low, ["arquitetura", "arquiteturas", "architecture", "architectures"])
+    implicit_matches = re.findall(
+        r"(?:esteiras?|workflows?|pipelines?|repositorios?|repos?)\s+(?:de|do|da|dos|das)\s+([a-z0-9._/-]+)",
+        prompt_low,
+    )
+    return _dedupe(values + implicit_matches)
+
+
+def extract_languages(prompt: str) -> list[str]:
+    prompt_low = plain_text(prompt)
+    values = _extract_named_values(prompt_low, ["linguagem", "linguagens", "tecnologia", "tecnologias", "stack"])
+    inline = re.findall(
+        r"(?:workflows?|jobs?|checks?|repositorios?|repos?)\s+([a-z0-9+#._/-]{4,})(?=\s+(?:mais|menos|com|sem|nos?|nas?|do|da|dos|das|de|em|para|por|que|tiveram|teve|executaram|executou|rodaram|rodou|taxa|duracao|tempo|media|$))",
+        prompt_low,
+    )
+    return _dedupe(values + inline)
+
+
+def extract_teams(prompt: str) -> list[str]:
+    return _extract_named_values(prompt, ["time", "times", "vskey", "vskeys", "squad", "squads", "value stream"])
 
 
 def select_questions(prompt: str, *, time_range: str, include_sections: list[str]) -> list[str]:
-    prompt_low = prompt.lower()
+    prompt_low = plain_text(prompt)
     period = time_range_to_phrase(time_range)
     questions: list[str] = []
     architectures = extract_architectures(prompt)
+    languages = extract_languages(prompt)
+    teams = extract_teams(prompt)
 
     if "overview" in include_sections:
         questions.extend(
@@ -95,7 +136,7 @@ def select_questions(prompt: str, *, time_range: str, include_sections: list[str
         )
 
     if "approvals" in include_sections:
-        questions.append("quantos jobs estão com status wating aguardando aprovação?")
+        questions.append("quais jobs estao aguardando aprovacao?")
 
     if "analysts" in include_sections:
         questions.append(f"Qual o analista com maior sucesso de execução de workflows nos {period}?")
@@ -111,20 +152,22 @@ def select_questions(prompt: str, *, time_range: str, include_sections: list[str
     if "hml" in include_sections or "hml" in prompt_low or "hom" in prompt_low:
         questions.append(f"Quais workflows com maior volume de falhas em HML nos {period}?")
 
-    for arch in ["api", "srv", "bff", "apim"]:
-        if arch in include_sections or arch in architectures:
-            questions.extend(
-                [
-                    f"Qual é a porcentagem de falhas e sucesso em esteiras de {arch} nos {period}?",
-                    f"Quais repositórios de {arch} mais executaram workflows nos {period}?",
-                ]
-            )
+    for arch in architectures:
+        questions.extend(
+            [
+                f"Qual é a porcentagem de falhas e sucesso em esteiras de {arch} nos {period}?",
+                f"Quais repositórios de {arch} mais executaram workflows nos {period}?",
+            ]
+        )
 
-    if "java" in include_sections or "java" in prompt_low:
-        questions.append(f"Quais workflows Java com maior volume de falhas nos {period}?")
+    for language in languages:
+        questions.append(f"Quais workflows {language} com maior volume de falhas nos {period}?")
 
-    if "teams" in include_sections or "time" in prompt_low or "vskey" in prompt_low:
-        questions.append(f"Quais workflows do time core com maior volume de falhas nos {period}?")
+    if teams:
+        for team in teams:
+            questions.append(f"Quais workflows do time {team} com maior volume de falhas nos {period}?")
+    elif "teams" in include_sections or "time" in prompt_low or "vskey" in prompt_low:
+        questions.append(f"Quais times com maior volume de falhas nos {period}?")
 
     return list(dict.fromkeys(questions))
 

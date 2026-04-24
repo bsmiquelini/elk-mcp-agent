@@ -13,6 +13,7 @@ from schema_utils import (
     resolve_agg_field,
     resolve_exact_field,
 )
+from tools.time_filters import build_time_range_clause
 
 
 def aggregate(
@@ -21,6 +22,7 @@ def aggregate(
     field:       str,
     group_by:    str | None  = None,
     time_range:  str         = None,
+    time_field:  str | None  = None,
     filters:     dict        = None,
     any_filters: dict        = None,
     interval:    str | None  = None,
@@ -43,7 +45,7 @@ def aggregate(
     es          = get_client(config)
     index       = get_index(config)
     schema      = load_index_schema(config, es=es, index=index)
-    time_field  = config.get("elasticsearch", {}).get("time_field", "workflow_run.started_at")
+    time_field  = time_field or config.get("elasticsearch", {}).get("time_field", "workflow_run.started_at")
     time_range  = time_range or config.get("elasticsearch", {}).get("default_time_range", "7d")
     filters     = filters or {}
     any_filters = any_filters or {}
@@ -86,6 +88,7 @@ def aggregate(
             "group_by":   group_by,
             "resolved_group_by": resolved_group_by,
             "time_range": time_range,
+            "time_field": time_field,
             "filters":    filters,
             "any_filters": any_filters,
             "result":     result,
@@ -98,7 +101,7 @@ def aggregate(
 # ── Builders ──────────────────────────────────────────────────
 
 def _build_query(time_range: str, time_field: str, filters: dict, any_filters: dict, schema: dict) -> dict:
-    must = [{"range": {time_field: {"gte": f"now-{time_range}", "lte": "now"}}}]
+    must = [build_time_range_clause(time_field, time_range)]
     should = []
     for f, v in filters.items():
         if get_nested_path(f, schema):

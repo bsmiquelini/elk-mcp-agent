@@ -5,10 +5,11 @@ Respostas diretas para perguntas recorrentes do MVP.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import re
 import unicodedata
+from zoneinfo import ZoneInfo
 
 from renderer import print_tool_call
 from semantic_rules import (
@@ -45,6 +46,334 @@ def _iter_dimension_values(value) -> list[str]:
     return [str(value)]
 
 
+_MONTHS_PT = {
+    "janeiro": 1,
+    "fevereiro": 2,
+    "marco": 3,
+    "abril": 4,
+    "maio": 5,
+    "junho": 6,
+    "julho": 7,
+    "agosto": 8,
+    "setembro": 9,
+    "outubro": 10,
+    "novembro": 11,
+    "dezembro": 12,
+}
+_DATE_TOKEN_PATTERN = (
+    r"(?:\d{4}-\d{1,2}-\d{1,2}"
+    r"|\d{1,2}/\d{1,2}/\d{2,4}"
+    r"|\d{1,2}\s+de\s+(?:janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+\d{4}"
+    r"|hoje|ontem|anteontem)"
+)
+_NAMED_FILTER_STOPWORDS = {
+    "a",
+    "as",
+    "com",
+    "da",
+    "das",
+    "de",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "esta",
+    "este",
+    "mais",
+    "menos",
+    "maior",
+    "menor",
+    "no",
+    "nos",
+    "na",
+    "nas",
+    "o",
+    "os",
+    "ou",
+    "para",
+    "por",
+    "que",
+    "sao",
+    "tem",
+    "temos",
+    "tipo",
+    "tipos",
+    "workflow",
+    "workflows",
+    "job",
+    "jobs",
+    "check",
+    "checks",
+    "esteira",
+    "esteiras",
+    "pipeline",
+    "pipelines",
+    "falha",
+    "falhas",
+    "erro",
+    "erros",
+    "sucesso",
+    "deploy",
+    "build",
+    "rollback",
+    "security",
+    "scan",
+    "gate",
+    "approval",
+    "test",
+    "tests",
+    "rodaram",
+    "rodou",
+    "executaram",
+    "executou",
+    "ocorreram",
+    "ocorreu",
+    "apresentam",
+    "apresenta",
+    "teve",
+    "tiveram",
+    "existe",
+    "existem",
+    "existir",
+    "existentes",
+    "disponivel",
+    "disponiveis",
+    "ambiente",
+    "ambientes",
+    "hoje",
+    "atual",
+    "atuais",
+    "atualmente",
+    "diferente",
+    "diferentes",
+    "distinto",
+    "distintos",
+    "distinta",
+    "distintas",
+    "com",
+    "sem",
+    "tem",
+    "tendo",
+    "nos",
+    "nas",
+}
+_APP_TIMEZONE_NAME = "America/Sao_Paulo"
+_APP_TIMEZONE = ZoneInfo(_APP_TIMEZONE_NAME)
+
+
+def _local_now() -> datetime:
+    return datetime.now(_APP_TIMEZONE)
+
+
+def _to_app_timezone(value: datetime | None, *, assume_local: bool = False) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_APP_TIMEZONE if assume_local else timezone.utc)
+    return value.astimezone(_APP_TIMEZONE)
+
+
+def _format_datetime_local(value: str | datetime | None) -> str:
+    if value in (None, ""):
+        return "-"
+    dt = value if isinstance(value, datetime) else _parse_iso(str(value))
+    if not dt:
+        return str(value)
+    local_dt = _to_app_timezone(dt)
+    offset = local_dt.strftime("%z")
+    if len(offset) == 5:
+        offset = f"{offset[:3]}:{offset[3:]}"
+    return f"{local_dt.strftime('%Y-%m-%d %H:%M:%S')} {offset} ({_APP_TIMEZONE_NAME})"
+
+
+def _parse_clock_parts(value: str) -> tuple[int, int, int]:
+    parts = [int(part) for part in value.split(":")]
+    while len(parts) < 3:
+        parts.append(0)
+    return parts[0], parts[1], parts[2]
+
+
+def _month_bounds(year: int, month: int) -> tuple[date, date]:
+    start = date(year, month, 1)
+    if month == 12:
+        next_month = date(year + 1, 1, 1)
+    else:
+        next_month = date(year, month + 1, 1)
+    return start, next_month - timedelta(days=1)
+
+
+def _canonical_date_window(start_day: date, end_day: date | None = None) -> str:
+    if end_day is None or start_day == end_day:
+        return start_day.isoformat()
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    return f"{start_day.isoformat()}..{end_day.isoformat()}"
+
+
+def _parse_question_date_token(token: str) -> date | None:
+    normalized = _plain_text(re.sub(r"\s+", " ", token).strip(" ,.;"))
+    today = _local_now().date()
+
+    if normalized == "hoje":
+        return today
+    if normalized == "ontem":
+        return today - timedelta(days=1)
+    if normalized == "anteontem":
+        return today - timedelta(days=2)
+
+    iso_match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", normalized)
+    if iso_match:
+        return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+
+    slash_match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", normalized)
+    if slash_match:
+        year = int(slash_match.group(3))
+        if year < 100:
+            year += 2000
+        return date(year, int(slash_match.group(2)), int(slash_match.group(1)))
+
+    text_match = re.fullmatch(
+        r"(\d{1,2})\s+de\s+(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})",
+        normalized,
+    )
+    if text_match:
+        return date(int(text_match.group(3)), _MONTHS_PT[text_match.group(2)], int(text_match.group(1)))
+
+    return None
+
+
+def _extract_named_filter_value(q: str, aliases: list[str]) -> str | None:
+    for alias in aliases:
+        patterns = [
+            rf"{re.escape(alias)}(?:\s+de|\s+do|\s+da|\s+dos|\s+das|:)?\s+([a-z0-9._/-]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, q)
+            if not match:
+                continue
+            candidate = match.group(1).strip(" ,.;:")
+            if candidate and candidate not in _NAMED_FILTER_STOPWORDS:
+                return candidate
+    return None
+
+
+def _case_variants(value: str) -> list[str]:
+    variants = [value, value.lower(), value.upper(), value.title()]
+    seen = set()
+    result = []
+    for variant in variants:
+        if variant and variant not in seen:
+            seen.add(variant)
+            result.append(variant)
+    return result
+
+
+def _text_match_variants(value: str) -> list[str]:
+    base = re.sub(r"\s+", " ", str(value or "").strip())
+    if not base:
+        return []
+    variants = []
+    for item in _case_variants(base):
+        variants.extend([item, f"*{item}*"])
+    seen = set()
+    result = []
+    for item in variants:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _extract_inline_dimension_candidate(q: str, dimension_terms: list[str]) -> str | None:
+    joined_dimensions = "|".join(re.escape(term) for term in dimension_terms)
+    trailing_tokens = (
+        "mais|menos|maior|menor|com|sem|nos?|nas?|do|da|dos|das|de|em|para|por|que|"
+        "tiveram|teve|tem|executaram|executou|rodaram|rodou|apresentaram|apresenta|"
+        "falharam|falhou|falha|sucesso|taxa|duracao|duracao|tempo|media|media|ate|entre|\\?|$"
+    )
+    pattern = rf"(?:{joined_dimensions})\s+([a-z0-9+#._/-]+)(?=\s+(?:{trailing_tokens}))"
+    match = re.search(pattern, q)
+    if not match:
+        return None
+    candidate = match.group(1).strip(" ,.;:")
+    if not candidate or candidate in _NAMED_FILTER_STOPWORDS:
+        return None
+    return candidate
+
+
+def _extract_language_candidate(q: str) -> str | None:
+    explicit = _extract_named_filter_value(q, ["linguagem", "linguagens", "tecnologia", "tecnologias", "stack"])
+    if explicit:
+        return explicit
+
+    candidate = _extract_inline_dimension_candidate(
+        q,
+        ["workflow", "workflows", "job", "jobs", "check", "checks", "repositorio", "repositorios", "repo", "repos"],
+    )
+    if not candidate:
+        return None
+
+    if len(candidate) >= 4 or any(symbol in candidate for symbol in "+#."):
+        return candidate
+    return None
+
+
+def _extract_branch_candidate(q: str) -> str | None:
+    explicit = _extract_named_filter_value(q, ["branch", "branches"])
+    if explicit:
+        return explicit
+    return None
+
+
+def _question_has_scope_filters(q: str) -> bool:
+    generic_scope_terms = [
+        "arquitetura",
+        "architecture",
+        "topico",
+        "topic",
+        "linguagem",
+        "tecnologia",
+        "stack",
+        "branch",
+        "ambiente",
+        "time",
+        "vskey",
+        "squad",
+        "privado",
+        "publico",
+        "fork",
+        "build",
+        "deploy",
+        "rollback",
+        "security",
+        "scan",
+        "gate",
+        "approval",
+        "test",
+        "falha",
+        "sucesso",
+        "taxa",
+        "duracao",
+        "tempo",
+        "prd",
+        "prod",
+        "produc",
+        "hml",
+        "homolog",
+        "stg",
+        "staging",
+        "dev",
+        "sandbox",
+    ]
+    if any(term in q for term in generic_scope_terms):
+        return True
+    if _extract_language_candidate(q):
+        return True
+    if _extract_branch_candidate(q):
+        return True
+    return False
+
+
 async def _call_tool_json(mcp_session, name: str, args: dict, call_tool) -> dict:
     print_tool_call(name, args)
     raw = await call_tool(mcp_session, name, args)
@@ -59,7 +388,9 @@ def _deploy_filter_value(field: str | None) -> str | None:
         return None
     if field == "deployment.task":
         return "deploy"
-    return "*deploy*"
+    if field in {"workflow_run.name", "workflow.name", "check_run.name"}:
+        return "*deploy*"
+    return None
 
 
 def _format_percent(value: int, total: int) -> str:
@@ -170,15 +501,22 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
 
     latest_workflow = _is_latest_workflow_question(q)
     first_workflow = _is_first_workflow_question(q)
+    latest_deploy = _is_latest_deploy_question(q)
+    first_deploy = _is_first_deploy_question(q)
     deploys_last_day = "deploy" in q and "ultimo dia" in q
-    deploy_rate_java = "deploy" in q and "java" in q and (("taxa" in q or "taza" in q) or ("sucesso" in q and "falha" in q))
+    language_candidate = _extract_language_candidate(q)
+    deploy_rate_language = (
+        "deploy" in q
+        and bool(language_candidate)
+        and (("taxa" in q or "taza" in q or "porcentagem" in q or "percentual" in q) or ("sucesso" in q and "falha" in q))
+    )
     build_failures = "build" in q and ("falha" in q or "problema" in q) and ("recorr" in q or "recurrent" in q)
     least_executed_workflow = _is_least_executed_workflow_question(q)
     most_executed_workflow = _is_most_executed_workflow_question(q)
     executed_jobs = _is_executed_jobs_question(q)
     executed_workflows = _is_executed_workflows_question(q)
     job_longest_duration = _is_job_longest_duration_question(q)
-    average_java_workflow_duration = _is_average_java_workflow_duration_question(q)
+    average_language_workflow_duration = _is_average_workflow_duration_question(q) and bool(language_candidate)
     workflows_fail_prd = _is_workflows_most_fail_prd_question(q)
     workflows_best_success_prd = _is_workflows_best_success_prd_question(q)
     fastest_workflows_by_repo = _is_fastest_workflows_by_repo_question(q)
@@ -224,6 +562,18 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
         if result:
             return result
 
+    if latest_deploy:
+        result = await _answer_deploy_edge(
+            profile=profile,
+            question=question,
+            config=config,
+            mcp_session=mcp_session,
+            call_tool=call_tool,
+            order="desc",
+        )
+        if result:
+            return result
+
     if latest_failed_projects_list:
         result = await _answer_recent_failure_listing(
             question=question,
@@ -254,6 +604,18 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
             schema=schema,
             mcp_session=mcp_session,
             call_tool=call_tool,
+        )
+        if result:
+            return result
+
+    if first_deploy:
+        result = await _answer_deploy_edge(
+            profile=profile,
+            question=question,
+            config=config,
+            mcp_session=mcp_session,
+            call_tool=call_tool,
+            order="asc",
         )
         if result:
             return result
@@ -496,7 +858,8 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
             mcp_session,
             "search",
             {
-                "time_range": "90d",
+                "time_range": _extract_time_range(question, default="90d"),
+                "time_field": time_field,
                 "sort": f"{time_field}:desc",
                 "limit": 1,
                 "fields": fields,
@@ -511,7 +874,7 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
         workflow_name = _dig(doc, workflow_field) or _dig(doc, "workflow.name") or _dig(doc, "workflow_run.name")
         repo_name = _dig(doc, repo_field) or _dig(doc, "repository.full_name") or _dig(doc, "repository.name")
         status = _dig(doc, status_field)
-        when = _dig(doc, time_field)
+        when = _format_datetime_local(_dig(doc, time_field))
         env = _dig(doc, env_field)
 
         extra = f" no ambiente {env}" if env else ""
@@ -613,12 +976,12 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
             )
         return {"answer": answer, "dashboard": dashboard}
 
-    if deploy_rate_java:
+    if deploy_rate_language:
         status_field = "deployment_status.state" if "deployment_status.state" in profile.get("candidate_status_fields", []) else profile.get("workflow_status_field")
         deploy_field = profile.get("deploy_indicator_field")
         language_field = profile.get("repository_language_field")
         deploy_value = _deploy_filter_value(deploy_field)
-        if not status_field or not deploy_field or not language_field or not deploy_value:
+        if not status_field or not deploy_field or not language_field or not deploy_value or not language_candidate:
             return None
 
         result = await _call_tool_json(
@@ -631,25 +994,27 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
                 "time_range": "30d",
                 "filters": {
                     deploy_field: deploy_value,
-                    language_field: "java",
+                    language_field: _case_variants(language_candidate),
                 },
             },
             call_tool,
         )
         buckets = result.get("result", [])
         total = sum(bucket.get("count", 0) for bucket in buckets)
+        language_label = language_candidate
+        dashboard_id = slugify_local(f"{language_label} deploy success rate")
         if total == 0:
             return {
-                "answer": "Nao encontrei deploys Java no periodo consultado.",
+                "answer": f"Nao encontrei deploys da linguagem {language_label} no periodo consultado.",
                 "dashboard": {
-                    "id": "java_deploy_success_rate",
-                    "title": "Taxa de Deploys Java",
+                    "id": dashboard_id,
+                    "title": f"Taxa de Deploys {language_label}",
                     "cards": [
-                        {"label": "Deploys Java", "value": "0", "tone": "warning"},
+                        {"label": f"Deploys {language_label}", "value": "0", "tone": "warning"},
                         {"label": "Periodo", "value": "30d", "tone": "accent"},
                     ],
                     "sections": [
-                        {"type": "text", "title": "Resumo", "text": "Nenhum deploy Java foi encontrado no periodo consultado."}
+                        {"type": "text", "title": "Resumo", "text": f"Nenhum deploy da linguagem {language_label} foi encontrado no periodo consultado."}
                     ],
                 },
             }
@@ -667,10 +1032,10 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
         if other:
             pieces.append(f"Outros estados: {other} ({_format_percent(other, total)})")
 
-        answer = "Taxa dos deploys Java nos ultimos 30 dias: " + " | ".join(pieces) + "."
+        answer = f"Taxa dos deploys da linguagem {language_label} nos ultimos 30 dias: " + " | ".join(pieces) + "."
         dashboard = {
-            "id": "java_deploy_success_rate",
-            "title": "Taxa de Sucesso e Falha em Deploys Java",
+            "id": dashboard_id,
+            "title": f"Taxa de Sucesso e Falha em Deploys {language_label}",
             "cards": [
                 {"label": "Total de Deploys", "value": str(total), "tone": "accent"},
                 {"label": "Sucesso", "value": str(success), "note": _format_percent(success, total), "tone": "success"},
@@ -801,7 +1166,7 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
         if result:
             return result
 
-    if average_java_workflow_duration:
+    if average_language_workflow_duration:
         result = await _answer_average_duration(
             question=question,
             profile=profile,
@@ -811,9 +1176,9 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
             start_field=profile.get("workflow_start_field"),
             end_field=profile.get("workflow_end_field"),
             unique_field=profile.get("workflow_execution_id_field"),
-            filters={profile.get("repository_language_field"): "java"} if profile.get("repository_language_field") else {},
-            title="Media de Duracao de Workflows Java",
-            answer_prefix="A media de duracao das execucoes de workflows Java no periodo consultado foi",
+            filters={profile.get("repository_language_field"): _case_variants(language_candidate)} if profile.get("repository_language_field") and language_candidate else {},
+            title=f"Media de Duracao de Workflows {language_candidate}",
+            answer_prefix=f"A media de duracao das execucoes de workflows {language_candidate} no periodo consultado foi",
         )
         if result:
             return result
@@ -825,7 +1190,7 @@ async def try_direct_answer(question: str, schema: dict, mcp_session, call_tool,
             mcp_session=mcp_session,
             call_tool=call_tool,
             group_field=profile.get("workflow_name_field"),
-            status_field=_best_status_field(profile),
+            status_field=_best_status_field(profile, prefer_deployment=True),
             filters=_environment_filters(profile, "prd", include_failure=True),
             time_range="365d",
             title="Workflows que Mais Falham em PRD",
@@ -1097,6 +1462,53 @@ def _wide_time_range(question: str, schema: dict) -> str:
 
 def _extract_time_range(question: str, default: str = "90d") -> str:
     q = _plain_text(question)
+    q = re.sub(r"\s+", " ", q).strip()
+
+    for pattern in [
+        rf"(?:entre)\s+({_DATE_TOKEN_PATTERN})\s+(?:e|ate)\s+({_DATE_TOKEN_PATTERN})",
+        rf"(?:de)\s+({_DATE_TOKEN_PATTERN})\s+(?:a|ate)\s+({_DATE_TOKEN_PATTERN})",
+    ]:
+        match = re.search(pattern, q)
+        if not match:
+            continue
+        start_day = _parse_question_date_token(match.group(1))
+        end_day = _parse_question_date_token(match.group(2))
+        if start_day and end_day:
+            return _canonical_date_window(start_day, end_day)
+
+    for pattern in [
+        rf"(?:no dia|dia)\s+({_DATE_TOKEN_PATTERN})",
+        rf"\bem\s+({_DATE_TOKEN_PATTERN})",
+    ]:
+        match = re.search(pattern, q)
+        if not match:
+            continue
+        day = _parse_question_date_token(match.group(1))
+        if day:
+            return _canonical_date_window(day)
+
+    now = _local_now()
+    today = now.date()
+    start_of_week = today - timedelta(days=today.weekday())
+    start_of_month, end_of_month = _month_bounds(today.year, today.month)
+    previous_month_anchor = start_of_month - timedelta(days=1)
+    previous_month_start, previous_month_end = _month_bounds(previous_month_anchor.year, previous_month_anchor.month)
+
+    if "esta semana" in q or "semana atual" in q:
+        return _canonical_date_window(start_of_week, today)
+    if "semana passada" in q:
+        end_of_last_week = start_of_week - timedelta(days=1)
+        start_of_last_week = end_of_last_week - timedelta(days=6)
+        return _canonical_date_window(start_of_last_week, end_of_last_week)
+    if "este mes" in q or "mes atual" in q:
+        return _canonical_date_window(start_of_month, today)
+    if "mes passado" in q:
+        return _canonical_date_window(previous_month_start, previous_month_end)
+    if "este ano" in q or "ano atual" in q:
+        return _canonical_date_window(date(today.year, 1, 1), today)
+    if "ano passado" in q:
+        return _canonical_date_window(date(today.year - 1, 1, 1), date(today.year - 1, 12, 31))
+
     if "ultimo dia" in q or "utimo dia" in q or "ultimas 24h" in q or "ultimas 24 horas" in q:
         return "1d"
     if "ultima semana" in q or "ultma semana" in q:
@@ -1117,6 +1529,33 @@ def _extract_time_range(question: str, default: str = "90d") -> str:
         return "365d"
     if "ate hoje" in q or "ate agora" in q or "historico" in q or "tudo" in q or "algum momento" in q or "ja executaram" in q:
         return "365d"
+    if re.search(r"\bhoje\b", q):
+        return _canonical_date_window(today)
+    if re.search(r"\bontem\b", q):
+        return _canonical_date_window(today - timedelta(days=1))
+    if re.search(r"\banteontem\b", q):
+        return _canonical_date_window(today - timedelta(days=2))
+
+    patterns = [
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+horas?", lambda value: f"{value}h"),
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+dias?", lambda value: f"{value}d"),
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+semanas?", lambda value: f"{value * 7}d"),
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+mes(?:es)?", lambda value: f"{value * 30}d"),
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+trimestres?", lambda value: f"{value * 90}d"),
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+semestres?", lambda value: f"{value * 180}d"),
+        (r"(?:nos?\s+)?u+ltim(?:o|a)s?\s+(\d+)\s+anos?", lambda value: f"{value * 365}d"),
+    ]
+    for pattern, formatter in patterns:
+        match = re.search(pattern, q)
+        if match:
+            return formatter(int(match.group(1)))
+
+    bare_tokens = re.findall(_DATE_TOKEN_PATTERN, q)
+    if len(bare_tokens) == 1:
+        day = _parse_question_date_token(bare_tokens[0])
+        if day:
+            return _canonical_date_window(day)
+
     return default
 
 
@@ -1124,21 +1563,48 @@ def _is_executed_jobs_question(q: str) -> bool:
     mentions_job = any(term in q for term in ["job", "jobs", "check", "checks"])
     asks_listing = any(term in q for term in ["quais", "lista", "lista os", "mostre"])
     asks_execution = any(term in q for term in ["execut", "rod", "rodaram", "rodou"])
-    filters = ["build", "deploy", "rollback", "security", "scan", "java", "python", "typescript", "node", "prd", "hml", "stg", "dev", "sandbox", "topico", "branch", "privado", "publico", "falha", "falhas", "sucesso", "taxa", "duracao", "tempo", "time", "vskey", "api", "srv", "bff", "apim"]
-    return mentions_job and asks_listing and asks_execution and not any(term in q for term in filters)
+    ranking_modifiers = [
+        "mais execut",
+        "maior execu",
+        "maior volume",
+        "menos execut",
+        "menor execu",
+        "menor volume",
+        "taxa",
+        "mais falh",
+        "menos falh",
+    ]
+    return (
+        mentions_job
+        and asks_listing
+        and asks_execution
+        and not _question_has_scope_filters(q)
+        and not any(term in q for term in ranking_modifiers)
+    )
 
 
 def _is_executed_workflows_question(q: str) -> bool:
     mentions_workflow = any(term in q for term in ["workflow", "workflows"])
     asks_listing = any(term in q for term in ["quais", "lista", "lista os", "mostre"])
     asks_execution = any(term in q for term in ["execut", "rod", "rodaram", "rodou"])
-    other_dimensions = ["repositorio", "repositorios", "repo", "analista", "analistas", "linguagem", "linguagens", "topico", "topicos", "branch", "branches", "ambiente", "ambientes", "java", "python", "typescript", "node", "prd", "hml", "stg", "dev", "sandbox", "privado", "publico", "build", "deploy", "rollback", "security", "scan", "time", "vskey", "api", "srv", "bff", "apim"]
+    ranking_modifiers = [
+        "mais execut",
+        "maior execu",
+        "maior volume",
+        "menos execut",
+        "menor execu",
+        "menor volume",
+        "taxa",
+        "mais falh",
+        "menos falh",
+    ]
     return (
         mentions_workflow
         and asks_listing
         and asks_execution
         and not _is_executed_jobs_question(q)
-        and not any(term in q for term in other_dimensions)
+        and not _question_has_scope_filters(q)
+        and not any(term in q for term in ranking_modifiers)
     )
 
 
@@ -1148,8 +1614,13 @@ def _is_latest_workflow_question(q: str) -> bool:
         for pattern in [
             "ultimo workflow",
             "ultima execucao de workflow",
+            "ultima execucao do workflow",
+            "ultima execucao da esteira",
+            "ultima execucao do pipeline",
+            "ultima execucao da pipeline",
             "ultimo workflow que rodou",
             "workflow mais recente",
+            "esteira mais recente",
             "data de execucao do ultimo workflow",
         ]
     )
@@ -1161,6 +1632,10 @@ def _is_first_workflow_question(q: str) -> bool:
         for pattern in [
             "primeiro workflow",
             "primeira execucao de workflow",
+            "primeira execucao do workflow",
+            "primeira execucao da esteira",
+            "primeira execucao do pipeline",
+            "primeira execucao da pipeline",
             "primeiro workflow a rodar",
             "primeiro workflow que rodou",
             "primeira esteira a rodar",
@@ -1168,22 +1643,47 @@ def _is_first_workflow_question(q: str) -> bool:
     )
 
 
+def _is_latest_deploy_question(q: str) -> bool:
+    return "deploy" in q and not _is_recent_deploy_listing_question(q) and any(
+        pattern in q
+        for pattern in [
+            "ultimo deploy",
+            "deploy mais recente",
+            "data do ultimo deploy",
+            "quando foi o ultimo deploy",
+            "quando aconteceu o ultimo deploy",
+            "quando ocorreu o ultimo deploy",
+        ]
+    )
+
+
+def _is_first_deploy_question(q: str) -> bool:
+    return "deploy" in q and not _is_recent_deploy_listing_question(q) and any(
+        pattern in q
+        for pattern in [
+            "primeiro deploy",
+            "data do primeiro deploy",
+            "quando foi o primeiro deploy",
+            "quando aconteceu o primeiro deploy",
+            "quando ocorreu o primeiro deploy",
+        ]
+    )
+
+
 def _is_least_executed_workflow_question(q: str) -> bool:
-    other_dimensions = ["repositorio", "repositorios", "repo", "analista", "analistas", "linguagem", "linguagens", "topico", "topicos", "branch", "branches", "ambiente", "ambientes", "java", "python", "typescript", "prd", "hml", "stg", "privado", "publico", "build", "deploy", "security", "scan", "api", "srv", "bff", "time", "vskey"]
     return (
         q.startswith("qual")
         and "workflow" in q
-        and not any(term in q for term in other_dimensions)
+        and not _question_has_scope_filters(q)
         and any(term in q for term in ["menos execut", "menor execu", "menos rod", "menos ocorreu", "menos teve execu"])
     )
 
 
 def _is_most_executed_workflow_question(q: str) -> bool:
-    other_dimensions = ["repositorio", "repositorios", "repo", "analista", "analistas", "linguagem", "linguagens", "topico", "topicos", "branch", "branches", "ambiente", "ambientes", "java", "python", "typescript", "prd", "hml", "stg", "privado", "publico", "build", "deploy", "security", "scan", "api", "srv", "bff", "time", "vskey"]
     return (
         q.startswith("qual")
         and "workflow" in q
-        and not any(term in q for term in other_dimensions)
+        and not _question_has_scope_filters(q)
         and any(term in q for term in ["mais execut", "maior execu", "mais rod", "mais ocorreu", "mais teve execu"])
     )
 
@@ -1192,8 +1692,8 @@ def _is_job_longest_duration_question(q: str) -> bool:
     return any(term in q for term in ["job", "jobs", "check", "checks"]) and any(term in q for term in ["mais demora", "maior duracao", "mais lento", "demora mais"])
 
 
-def _is_average_java_workflow_duration_question(q: str) -> bool:
-    return "workflow" in q and "java" in q and any(term in q for term in ["media de execu", "media de dur", "duracao media"])
+def _is_average_workflow_duration_question(q: str) -> bool:
+    return "workflow" in q and any(term in q for term in ["media de execu", "media de dur", "duracao media"])
 
 
 def _is_workflows_most_fail_prd_question(q: str) -> bool:
@@ -1221,7 +1721,7 @@ def _is_top_analyst_by_executions_question(q: str) -> bool:
 
 
 def _is_status_mix_question(q: str) -> bool:
-    return any(term in q for term in ["porcentagem", "percentual", "taxa geral"]) and "sucesso" in q and "falha" in q
+    return any(term in q for term in ["porcentagem", "percentual", "taxa geral", "taxa"]) and "sucesso" in q and "falha" in q
 
 
 def _is_worst_step_question(q: str) -> bool:
@@ -1319,31 +1819,56 @@ def _is_analysts_working_on_workflow_question(q: str) -> bool:
 
 
 def _is_available_workflows_question(q: str) -> bool:
-    filters = ["java", "python", "typescript", "prd", "hml", "stg", "topico", "branch", "privado", "publico", "build", "deploy", "security", "scan"]
     return (
         "workflow" in q
         and any(term in q for term in ["temos disponivel", "temos disponiveis", "temos ate agora", "disponivel no ambiente", "disponiveis no ambiente"])
-        and not any(term in q for term in filters)
+        and not _question_has_scope_filters(q)
     )
 
 
 def _is_repository_count_question(q: str) -> bool:
-    filters = ["java", "python", "typescript", "prd", "hml", "stg", "topico", "branch", "privado", "publico", "build", "deploy", "security", "scan"]
     return (
         any(term in q for term in ["quantos repositorios", "quantos repositorios temos", "quantos repos"])
         and "workflow" in q
-        and not any(term in q for term in filters)
+        and not _question_has_scope_filters(q)
     )
 
 
 def _is_recent_failure_listing_question(q: str) -> bool:
-    return _wants_list_output(q) and any(term in q for term in ["falharam", "falha", "falhou"]) and any(
-        term in q for term in ["repositorio", "repositorios", "repo", "repos", "projetos", "projeto"]
+    ranking_modifiers = ["mais falharam", "mais falha", "mais falhou", "maior volume", "taxa de falha", "maior taxa"]
+    mentions_entity = any(term in q for term in ["repositorio", "repositorios", "repo", "repos", "projetos", "projeto"]) or "deploy" in q
+    asks_listing = any(term in q for term in ["quais", "liste", "lista", "mostre", "informe"])
+    return (
+        asks_listing
+        and any(term in q for term in ["falharam", "falha", "falhou"])
+        and mentions_entity
+        and not any(term in q for term in ranking_modifiers)
     )
 
 
 def _is_recent_deploy_listing_question(q: str) -> bool:
-    return any(term in q for term in ["ultimos deploys", "quais os ultimos deploys", "quais sao os ultimos deploys", "ultimos projetos que tiveram deploy", "ultimos projetos com deploy"])
+    return (
+        any(
+            term in q
+            for term in [
+                "ultimos deploys",
+                "quais os ultimos deploys",
+                "quais sao os ultimos deploys",
+                "ultimos projetos que tiveram deploy",
+                "ultimos projetos com deploy",
+                "quais foram os deploys",
+                "quais deploys ocorreram",
+                "quais foram os deploys que ocorreram",
+                "mostre os deploys que ocorreram",
+                "liste os deploys que ocorreram",
+            ]
+        )
+        or (
+            _wants_list_output(q)
+            and "deploy" in q
+            and any(term in q for term in ["ocorreram", "aconteceram", "foram", "tiveram", "rolaram", "rodaram", "realizados"])
+        )
+    )
 
 
 def _is_team_repository_failure_combo_question(q: str) -> bool:
@@ -1423,8 +1948,8 @@ def _reformulate(message: str) -> dict:
     return {"answer": message, "dashboard": None}
 
 
-def _best_status_field(profile: dict) -> str | None:
-    if "deployment_status.state" in profile.get("candidate_status_fields", []):
+def _best_status_field(profile: dict, *, prefer_deployment: bool = False) -> str | None:
+    if prefer_deployment and "deployment_status.state" in profile.get("candidate_status_fields", []):
         return "deployment_status.state"
     return profile.get("workflow_status_field")
 
@@ -1435,7 +1960,7 @@ def _environment_filters(profile: dict, env_code: str, include_failure: bool = F
     if env_field:
         filters[env_field] = env_code.upper()
     if include_failure:
-        status_field = _best_status_field(profile)
+        status_field = _best_status_field(profile, prefer_deployment=True)
         if status_field:
             filters[status_field] = ["failure", "failed", "error", "timed_out"]
     return filters
@@ -1473,8 +1998,21 @@ def _format_duration(seconds: float | None) -> str:
 
 
 def _time_range_days(time_range: str) -> int:
+    normalized = str(time_range).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
+        return 1
+    if ".." in normalized:
+        try:
+            start_raw, end_raw = normalized.split("..", 1)
+            start_day = date.fromisoformat(start_raw)
+            end_day = date.fromisoformat(end_raw)
+            return max(1, abs((end_day - start_day).days) + 1)
+        except ValueError:
+            return 1
+    if normalized.endswith("h"):
+        return 1
     try:
-        return max(1, int(str(time_range).rstrip("d")))
+        return max(1, int(normalized.rstrip("dwmy")))
     except Exception:
         return 30
 
@@ -1503,19 +2041,18 @@ def _extract_explicit_datetime(question: str):
     if iso_match:
         date_part = iso_match.group(1)
         time_part = iso_match.group(2) or "00:00:00"
-        if len(time_part) == 5:
-            time_part += ":00"
-        return _parse_iso(f"{date_part}T{time_part}Z")
+        year, month, day = [int(part) for part in date_part.split("-")]
+        hour, minute, second = _parse_clock_parts(time_part)
+        return datetime(year, month, day, hour, minute, second, tzinfo=_APP_TIMEZONE)
 
     br_match = re.search(r"(\d{2}/\d{2}/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?", question)
     if br_match:
         date_part = br_match.group(1)
         time_part = br_match.group(2) or "00:00:00"
-        if len(time_part) == 5:
-            time_part += ":00"
         try:
             day, month, year = date_part.split("/")
-            return _parse_iso(f"{year}-{month}-{day}T{time_part}Z")
+            hour, minute, second = _parse_clock_parts(time_part)
+            return datetime(int(year), int(month), int(day), hour, minute, second, tzinfo=_APP_TIMEZONE)
         except Exception:
             return None
     return None
@@ -1529,7 +2066,11 @@ def _extract_explicit_repo_reference(question: str) -> str | None:
 
 
 def _extract_explicit_workflow_reference(question: str) -> str | None:
-    match = re.search(r"(?:esteira|workflow|pipeline)\s+(.+?)(?:\s+e\s+o|\s+em\s+[A-Z]{2,4}|\?|$)", question, flags=re.IGNORECASE)
+    match = re.search(
+        r"(?:esteira|workflow|pipeline)\s+(.+?)(?:\s+e\s+o|\s+em\s+[A-Z]{2,4}|\s+nos?\s+u+ltim|\s+no\s+u+ltim|\s+entre\s+\d{4}-|\s+em\s+\d{4}-|\?|$)",
+        question,
+        flags=re.IGNORECASE,
+    )
     if not match:
         return None
     candidate = match.group(1).strip(" .")
@@ -1551,6 +2092,7 @@ async def _fetch_documents(
 ) -> list[dict]:
     documents = []
     next_page = None
+    time_field = str(sort).split(":", 1)[0].strip() if sort else None
 
     while len(documents) < max_docs:
         args = {
@@ -1558,6 +2100,8 @@ async def _fetch_documents(
             "fields": [field for field in fields if field],
             "limit": min(200, max_docs - len(documents)),
         }
+        if time_field:
+            args["time_field"] = time_field
         if filters:
             args["filters"] = filters
         if any_filters:
@@ -1761,9 +2305,14 @@ async def _answer_workflow_edge(
     if not workflow_field:
         return None
 
-    filters, any_filters, filter_labels = _extract_business_filters(_plain_text(question), config, profile, "workflow")
-    normalized_question = _plain_text(question)
-    exact_env = _infer_exact_environment_value(question)
+    explicit_workflow = _extract_explicit_workflow_reference(question)
+    filter_question = question
+    if explicit_workflow:
+        filter_question = re.sub(re.escape(explicit_workflow), " ", question, flags=re.IGNORECASE)
+    filters, any_filters, filter_labels = _extract_business_filters(_plain_text(filter_question), config, profile, "workflow")
+    filter_labels = [label for label in filter_labels if not label.startswith("tipo de esteira")]
+    normalized_question = _plain_text(filter_question)
+    exact_env = _infer_exact_environment_value(filter_question)
     if exact_env and env_field:
         filters, any_filters = _remove_environment_filters(filters, any_filters, profile)
         filters[env_field] = exact_env
@@ -1778,28 +2327,67 @@ async def _answer_workflow_edge(
         if deploy_field and deploy_value:
             filters[deploy_field] = deploy_value
             filter_labels.append("deploy")
-    result = await _call_tool_json(
-        mcp_session,
-        "search",
-        {
-            "time_range": _extract_time_range(question, default="365d"),
-            "sort": f"{time_field}:{order}",
-            "limit": 1,
-            "fields": [workflow_field, repo_field, status_field, env_field, time_field],
-            "filters": filters,
-            "any_filters": any_filters,
-        },
-        call_tool,
-    )
-    docs = result.get("documents", [])
+    search_fields = [workflow_field, repo_field, status_field, env_field, time_field]
+    time_range = _extract_time_range(question, default="365d")
+    if explicit_workflow:
+        docs = await _fetch_documents(
+            mcp_session,
+            call_tool,
+            time_range=time_range,
+            fields=search_fields,
+            filters=filters,
+            any_filters=any_filters,
+            sort=f"{time_field}:{order}",
+            max_docs=5000,
+        )
+        workflow_candidates = [
+            str(_dig(doc, workflow_field) or "").strip()
+            for doc in docs
+            if _dig(doc, workflow_field)
+        ]
+        matched_workflow = _match_named_candidate(explicit_workflow, workflow_candidates) or _match_named_candidate(question, workflow_candidates)
+        if not matched_workflow:
+            adjective = "primeira" if order == "asc" else "ultima"
+            return {
+                "answer": f"Nao encontrei a {adjective} execucao da esteira `{explicit_workflow}` no periodo consultado.",
+                "dashboard": None,
+            }
+        docs = [
+            doc
+            for doc in docs
+            if _normalized_phrase(str(_dig(doc, workflow_field) or "")) == _normalized_phrase(matched_workflow)
+        ]
+        filter_labels.append(f"workflow {matched_workflow}")
+    else:
+        result = await _call_tool_json(
+            mcp_session,
+            "search",
+            {
+                "time_range": time_range,
+                "time_field": time_field,
+                "sort": f"{time_field}:{order}",
+                "limit": 1,
+                "fields": search_fields,
+                "filters": filters,
+                "any_filters": any_filters,
+            },
+            call_tool,
+        )
+        docs = result.get("documents", [])
     if not docs:
+        if explicit_workflow:
+            adjective = "primeira" if order == "asc" else "ultima"
+            return {
+                "answer": f"Nao encontrei a {adjective} execucao da esteira `{explicit_workflow}` no periodo consultado.",
+                "dashboard": None,
+            }
         return _reformulate("Nao encontrei workflow suficiente para responder essa pergunta.")
     doc = docs[0]
     workflow_name = _dig(doc, workflow_field)
     repo_name = _dig(doc, repo_field)
     status = _dig(doc, status_field)
     env = _dig(doc, env_field)
-    when = _dig(doc, time_field)
+    when = _format_datetime_local(_dig(doc, time_field))
     adjective = "primeiro" if order == "asc" else "ultimo"
     context = f" com filtro de {', '.join(filter_labels)}" if filter_labels else ""
     answer = (
@@ -1834,6 +2422,166 @@ async def _answer_workflow_edge(
     }
 
 
+async def _answer_deploy_edge(
+    *,
+    profile: dict,
+    question: str,
+    config: dict,
+    mcp_session,
+    call_tool,
+    order: str,
+) -> dict | None:
+    workflow_field = profile.get("workflow_name_field")
+    repo_field = profile.get("repository_name_field")
+    env_field = profile.get("environment_field")
+    status_field = _best_status_field(profile, prefer_deployment=True) or profile.get("workflow_status_field")
+    time_field = (
+        profile.get("deployment_updated_field")
+        or profile.get("deployment_created_field")
+        or profile.get("workflow_start_field")
+        or profile.get("primary_time_field")
+        or "@timestamp"
+    )
+    deploy_indicator_field = profile.get("deploy_indicator_field")
+    deploy_value = _deploy_filter_value(deploy_indicator_field)
+    if not workflow_field or not repo_field or not status_field or not deploy_indicator_field or not deploy_value:
+        return None
+
+    explicit_workflow = _extract_explicit_workflow_reference(question)
+    explicit_repo = _extract_explicit_repo_reference(question)
+    filter_question = question
+    if explicit_workflow:
+        filter_question = re.sub(re.escape(explicit_workflow), " ", filter_question, flags=re.IGNORECASE)
+    if explicit_repo:
+        filter_question = re.sub(re.escape(explicit_repo), " ", filter_question, flags=re.IGNORECASE)
+
+    filters, any_filters, filter_labels = _extract_business_filters(_plain_text(filter_question), config, profile, "workflow")
+    filter_labels = [label for label in filter_labels if not label.startswith("tipo de esteira")]
+    normalized_question = _plain_text(filter_question)
+    exact_env = _infer_exact_environment_value(filter_question)
+    filters[deploy_indicator_field] = deploy_value
+    filter_labels.append("deploy")
+    if exact_env and env_field:
+        filters, any_filters = _remove_environment_filters(filters, any_filters, profile)
+        filters[env_field] = exact_env
+    if any(term in normalized_question for term in ["falhou", "falha", "erro", "failure", "failed"]):
+        filters[status_field] = ["failure", "failed", "error", "timed_out", "cancelled", "canceled"]
+        filter_labels.append("status de falha")
+    elif "sucesso" in normalized_question:
+        filters[status_field] = ["success", "completed"]
+        filter_labels.append("status de sucesso")
+    filter_labels = list(dict.fromkeys(filter_labels))
+
+    docs = await _fetch_documents(
+        mcp_session,
+        call_tool,
+        time_range=_extract_time_range(question, default="365d"),
+        fields=[
+            workflow_field,
+            repo_field,
+            env_field,
+            status_field,
+            time_field,
+            profile.get("workflow_execution_id_field"),
+            profile.get("deployment_execution_id_field"),
+        ],
+        filters=filters,
+        any_filters=any_filters,
+        sort=f"{time_field}:{order}",
+        max_docs=5000,
+    )
+    if not docs:
+        adjective = "primeiro" if order == "asc" else "ultimo"
+        return {
+            "answer": f"Nao encontrei o {adjective} deploy com os filtros solicitados no periodo consultado.",
+            "dashboard": None,
+        }
+
+    repo_candidates, workflow_candidates = _scope_candidates_from_docs(docs, repo_field, workflow_field)
+    matched_workflow = explicit_workflow and (
+        _match_named_candidate(explicit_workflow, workflow_candidates) or _match_named_candidate(question, workflow_candidates)
+    )
+    if explicit_workflow and not matched_workflow:
+        adjective = "primeiro" if order == "asc" else "ultimo"
+        return {
+            "answer": f"Nao encontrei o {adjective} deploy da esteira `{explicit_workflow}` no periodo consultado.",
+            "dashboard": None,
+        }
+    matched_repo = explicit_repo and (
+        _match_named_candidate(explicit_repo, repo_candidates) or _match_named_candidate(question, repo_candidates)
+    )
+    if explicit_repo and not matched_repo:
+        adjective = "primeiro" if order == "asc" else "ultimo"
+        return {
+            "answer": f"Nao encontrei o {adjective} deploy do repositorio `{explicit_repo}` no periodo consultado.",
+            "dashboard": None,
+        }
+
+    unique_fields = [profile.get("deployment_execution_id_field"), profile.get("workflow_execution_id_field"), time_field]
+    scoped_docs = []
+    seen = set()
+    for doc in docs:
+        current_workflow = str(_dig(doc, workflow_field) or "")
+        current_repo = str(_dig(doc, repo_field) or "")
+        if matched_workflow and _normalized_phrase(current_workflow) != _normalized_phrase(matched_workflow):
+            continue
+        if matched_repo and _normalized_phrase(current_repo) != _normalized_phrase(matched_repo):
+            continue
+        if exact_env and not _env_matches_doc(doc, exact_env):
+            continue
+        unique_value = next((_dig(doc, field) for field in unique_fields if field and _dig(doc, field) is not None), None)
+        dedupe_key = str(unique_value or _dig(doc, time_field) or "")
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        scoped_docs.append(doc)
+    if not scoped_docs:
+        adjective = "primeiro" if order == "asc" else "ultimo"
+        return {
+            "answer": f"Nao encontrei o {adjective} deploy com os filtros solicitados no periodo consultado.",
+            "dashboard": None,
+        }
+
+    doc = scoped_docs[0]
+    workflow_name = _dig(doc, workflow_field)
+    repo_name = _dig(doc, repo_field)
+    status = _dig(doc, status_field)
+    env = _dig(doc, env_field)
+    when = _format_datetime_local(_dig(doc, time_field))
+    adjective = "primeiro" if order == "asc" else "ultimo"
+    context = f" com filtro de {', '.join(filter_labels)}" if filter_labels else ""
+    answer = (
+        f"{_emoji('deploy')} O {adjective} deploy encontrado{context} foi da esteira `{workflow_name}` no repositorio `{repo_name}`, "
+        f"com status `{status}`"
+        + (f" no ambiente `{env}`" if env else "")
+        + f", em `{when}`."
+    )
+    return {
+        "answer": answer,
+        "dashboard": {
+            "id": "first_deploy" if order == "asc" else "latest_deploy",
+            "title": "Primeiro Deploy Observado" if order == "asc" else "Ultimo Deploy Observado",
+            "cards": [
+                {"label": "Workflow", "value": workflow_name or "-", "tone": "accent"},
+                {"label": "Repositorio", "value": repo_name or "-", "tone": "accent"},
+                {"label": "Status", "value": status or "-", "tone": _status_tone(status)},
+                {"label": "Ambiente", "value": env or "n/a", "tone": "warning"},
+            ],
+            "sections": [
+                {
+                    "type": "kv",
+                    "title": "Detalhes",
+                    "items": [
+                        {"key": "Timestamp", "value": when or "-"},
+                        {"key": "Ordenacao", "value": order},
+                        {"key": "Filtro", "value": ", ".join(filter_labels) or "deploy"},
+                    ],
+                }
+            ],
+        },
+    }
+
+
 async def _answer_recent_failure_listing(
     *,
     question: str,
@@ -1847,13 +2595,14 @@ async def _answer_recent_failure_listing(
     status_field = profile.get("workflow_status_field")
     time_field = profile.get("workflow_start_field") or profile.get("primary_time_field")
     env_field = profile.get("environment_field")
-    if not repo_field or not workflow_field or not status_field or not time_field:
+    if not repo_field or not workflow_field or not status_field:
         return None
 
     filters, any_filters, filter_labels = _extract_business_filters(_plain_text(question), config, profile, "repository")
     filters[status_field] = ["failure", "failed", "error", "timed_out", "cancelled", "canceled"]
     if "deploy" in _plain_text(question):
-        status_field = _best_status_field(profile) or status_field
+        status_field = _best_status_field(profile, prefer_deployment=True) or status_field
+        time_field = profile.get("deployment_updated_field") or profile.get("deployment_created_field") or time_field
         filters.pop(profile.get("workflow_status_field"), None)
         deploy_field = profile.get("deploy_indicator_field")
         deploy_value = _deploy_filter_value(deploy_field)
@@ -1861,12 +2610,22 @@ async def _answer_recent_failure_listing(
             filters[deploy_field] = deploy_value
             filter_labels.append("deploy")
         filters[status_field] = ["failure", "failed", "error", "timed_out", "cancelled", "canceled"]
+    if not time_field:
+        return None
 
     docs = await _fetch_documents(
         mcp_session,
         call_tool,
         time_range=_extract_time_range(question, default="30d"),
-        fields=[repo_field, workflow_field, status_field, time_field, env_field, profile.get("workflow_execution_id_field")],
+        fields=[
+            repo_field,
+            workflow_field,
+            status_field,
+            time_field,
+            env_field,
+            profile.get("workflow_execution_id_field"),
+            profile.get("deployment_execution_id_field"),
+        ],
         filters=filters,
         any_filters=any_filters,
         sort=f"{time_field}:desc",
@@ -1875,14 +2634,18 @@ async def _answer_recent_failure_listing(
     items = []
     seen = set()
     for doc in docs:
-        unique_value = _dig(doc, profile.get("workflow_execution_id_field")) or _dig(doc, time_field)
+        unique_value = (
+            _dig(doc, profile.get("deployment_execution_id_field"))
+            or _dig(doc, profile.get("workflow_execution_id_field"))
+            or _dig(doc, time_field)
+        )
         dedupe_key = str(unique_value)
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
         repo = _dig(doc, repo_field) or "-"
         workflow = _dig(doc, workflow_field) or "-"
-        when = _dig(doc, time_field) or "-"
+        when = _format_datetime_local(_dig(doc, time_field))
         env = _dig(doc, env_field)
         status = _dig(doc, status_field) or "-"
         extra = f" | ambiente `{env}`" if env else ""
@@ -1920,7 +2683,7 @@ async def _answer_recent_failure_listing(
                         {
                             "repo": _dig(doc, repo_field) or "-",
                             "workflow": _dig(doc, workflow_field) or "-",
-                            "when": _dig(doc, time_field) or "-",
+                            "when": _format_datetime_local(_dig(doc, time_field)),
                             "status": _dig(doc, status_field) or "-",
                             "env": _dig(doc, env_field) or "-",
                         }
@@ -1942,9 +2705,14 @@ async def _answer_recent_deploy_listing(
 ) -> dict | None:
     workflow_field = profile.get("workflow_name_field")
     repo_field = profile.get("repository_name_field")
-    time_field = profile.get("workflow_start_field") or profile.get("primary_time_field")
+    time_field = (
+        profile.get("deployment_updated_field")
+        or profile.get("deployment_created_field")
+        or profile.get("workflow_start_field")
+        or profile.get("primary_time_field")
+    )
     env_field = profile.get("environment_field")
-    status_field = _best_status_field(profile)
+    status_field = _best_status_field(profile, prefer_deployment=True)
     deploy_field = profile.get("deploy_indicator_field")
     deploy_value = _deploy_filter_value(deploy_field)
     if not all([workflow_field, repo_field, time_field, status_field, deploy_field, deploy_value]):
@@ -1958,7 +2726,15 @@ async def _answer_recent_deploy_listing(
         mcp_session,
         call_tool,
         time_range=_extract_time_range(question, default="30d"),
-        fields=[repo_field, workflow_field, time_field, env_field, status_field, profile.get("workflow_execution_id_field")],
+        fields=[
+            repo_field,
+            workflow_field,
+            time_field,
+            env_field,
+            status_field,
+            profile.get("workflow_execution_id_field"),
+            profile.get("deployment_execution_id_field"),
+        ],
         filters=filters,
         any_filters=any_filters,
         sort=f"{time_field}:desc",
@@ -1967,20 +2743,37 @@ async def _answer_recent_deploy_listing(
     lines = []
     seen = set()
     for doc in docs:
-        unique_value = _dig(doc, profile.get("workflow_execution_id_field")) or _dig(doc, time_field)
+        unique_value = (
+            _dig(doc, profile.get("deployment_execution_id_field"))
+            or _dig(doc, profile.get("workflow_execution_id_field"))
+            or _dig(doc, time_field)
+        )
         if str(unique_value) in seen:
             continue
         seen.add(str(unique_value))
         repo = _dig(doc, repo_field) or "-"
         workflow = _dig(doc, workflow_field) or "-"
-        when = _dig(doc, time_field) or "-"
+        when = _format_datetime_local(_dig(doc, time_field))
         env = _dig(doc, env_field) or "-"
         status = _dig(doc, status_field) or "-"
         lines.append(f"`{repo}` | workflow `{workflow}` | data `{when}` | ambiente `{env}` | status `{status}`")
         if len(lines) == 8:
             break
     if not lines:
-        return None
+        period = _extract_time_range(question, default="30d")
+        return {
+            "answer": f"{_emoji('deploy')} Nao encontrei deploys no periodo `{period}` com os filtros solicitados.",
+            "dashboard": {
+                "id": slugify_local(f"recent deploys empty {question}"),
+                "title": "Ultimos Deploys Observados",
+                "cards": [
+                    {"label": "Deploys", "value": "0", "tone": "warning"},
+                    {"label": "Periodo", "value": period, "tone": "accent"},
+                    {"label": "Filtro", "value": ", ".join(filter_labels) or "deploy", "tone": "accent"},
+                ],
+                "sections": [],
+            },
+        }
     return {
         "answer": (
             f"{_emoji('deploy')} Lista dos ultimos deploys observados no periodo `{_extract_time_range(question, default='30d')}`:\n"
@@ -2009,7 +2802,7 @@ async def _answer_recent_deploy_listing(
                         {
                             "repo": _dig(doc, repo_field) or "-",
                             "workflow": _dig(doc, workflow_field) or "-",
-                            "when": _dig(doc, time_field) or "-",
+                            "when": _format_datetime_local(_dig(doc, time_field)),
                             "env": _dig(doc, env_field) or "-",
                             "status": _dig(doc, status_field) or "-",
                         }
@@ -2143,13 +2936,14 @@ async def _answer_status_mix(
     mcp_session,
     call_tool,
 ) -> dict | None:
-    status_field = _best_status_field(profile)
+    normalized_question = _plain_text(question)
+    status_field = _best_status_field(profile, prefer_deployment="deploy" in normalized_question)
     unique_field = profile.get("workflow_execution_id_field")
     time_field = profile.get("workflow_start_field") or profile.get("primary_time_field")
     if not status_field:
         return None
 
-    filters, any_filters, filter_labels = _extract_business_filters(_plain_text(question), config, profile, "workflow")
+    filters, any_filters, filter_labels = _extract_business_filters(normalized_question, config, profile, "workflow")
     time_range = _extract_time_range(question, default="90d")
     docs = await _fetch_documents(
         mcp_session,
@@ -2161,20 +2955,20 @@ async def _answer_status_mix(
         sort=f"{time_field}:desc" if time_field else None,
     )
     success, failure, other = _status_counts_from_docs(docs, status_field=status_field, unique_field=unique_field)
-    total = success + failure + other
-    if total <= 0:
+    considered_total = success + failure
+    if considered_total <= 0:
         return {
             "answer": (
                 f"{_emoji('summary')} No periodo `{time_range}`"
                 + (f" com filtro de {', '.join(filter_labels)}" if filter_labels else "")
-                + ", encontrei `0` execucoes unicas. "
+                + ", encontrei `0` execucoes classificadas como sucesso ou falha. "
                 f"{_emoji('success')} Sucesso: `0` (0%). {_emoji('failure')} Falha: `0` (0%)."
             ),
             "dashboard": {
                 "id": "status_mix",
                 "title": "Distribuicao de Sucesso e Falha",
                 "cards": [
-                    {"label": "Execucoes", "value": "0", "tone": "warning"},
+                    {"label": "Execucoes consideradas", "value": "0", "tone": "warning"},
                     {"label": "Periodo", "value": time_range, "tone": "accent"},
                 ],
                 "sections": [],
@@ -2183,19 +2977,17 @@ async def _answer_status_mix(
 
     context = f" com filtro de {', '.join(filter_labels)}" if filter_labels else ""
     answer = (
-        f"{_emoji('summary')} No periodo `{time_range}`{context}, encontrei `{total}` execucoes unicas. "
-        f"{_emoji('success')} Sucesso: `{success}` ({_format_percent(success, total)}). "
-        f"{_emoji('failure')} Falha: `{failure}` ({_format_percent(failure, total)})."
+        f"{_emoji('summary')} No periodo `{time_range}`{context}, considerei `{considered_total}` execucoes classificadas como sucesso ou falha. "
+        f"{_emoji('success')} Sucesso: `{success}` ({_format_percent(success, considered_total)}). "
+        f"{_emoji('failure')} Falha: `{failure}` ({_format_percent(failure, considered_total)})."
     )
     if other:
-        answer += f" {_emoji('warning')} Outros estados: `{other}` ({_format_percent(other, total)})."
+        answer += " As porcentagens consideram apenas execucoes concluidas em sucesso ou falha."
 
     series = [
-        {"label": "Sucesso", "value": success, "display_value": f"{success} ({_format_percent(success, total)})"},
-        {"label": "Falha", "value": failure, "display_value": f"{failure} ({_format_percent(failure, total)})"},
+        {"label": "Sucesso", "value": success, "display_value": f"{success} ({_format_percent(success, considered_total)})"},
+        {"label": "Falha", "value": failure, "display_value": f"{failure} ({_format_percent(failure, considered_total)})"},
     ]
-    if other:
-        series.append({"label": "Outros", "value": other, "display_value": f"{other} ({_format_percent(other, total)})"})
 
     return {
         "answer": answer,
@@ -2203,9 +2995,9 @@ async def _answer_status_mix(
             "id": "status_mix",
             "title": "Distribuicao de Sucesso e Falha",
             "cards": [
-                {"label": "Execucoes", "value": str(total), "tone": "accent"},
-                {"label": "Sucesso", "value": str(success), "note": _format_percent(success, total), "tone": "success"},
-                {"label": "Falha", "value": str(failure), "note": _format_percent(failure, total), "tone": "danger"},
+                {"label": "Execucoes consideradas", "value": str(considered_total), "tone": "accent"},
+                {"label": "Sucesso", "value": str(success), "note": _format_percent(success, considered_total), "tone": "success"},
+                {"label": "Falha", "value": str(failure), "note": _format_percent(failure, considered_total), "tone": "danger"},
                 {"label": "Periodo", "value": time_range, "tone": "accent"},
             ],
             "sections": [
@@ -2657,7 +3449,7 @@ async def _answer_anchor_to_first_delivery(
     repo_name = _dig(first_doc, repo_field) or "-"
     workflow_name = _dig(first_doc, workflow_field) or "-"
     env_value = _dig(first_doc, env_field) or exact_env or "-"
-    deploy_time = _dig(first_doc, deploy_time_field) or "-"
+    deploy_time = _format_datetime_local(_dig(first_doc, deploy_time_field))
     context = f" com filtro de {', '.join(filter_labels)}" if filter_labels else ""
     answer = (
         f"{_emoji('duration')} O tempo entre `{anchor_label}` e a primeira entrega{context}"
@@ -2681,7 +3473,7 @@ async def _answer_anchor_to_first_delivery(
                     "title": "Marcos",
                     "items": [
                         {"key": "Marco inicial", "value": anchor_label},
-                        {"key": "Data inicial", "value": anchor_value.isoformat().replace("+00:00", "Z") if anchor_value else "-"},
+                        {"key": "Data inicial", "value": _format_datetime_local(anchor_value)},
                         {"key": "Primeiro deploy", "value": str(deploy_time)},
                     ],
                 }
@@ -2760,7 +3552,7 @@ async def _answer_recent_rollback_listing(
 ) -> dict | None:
     repo_field = profile.get("repository_name_field")
     workflow_field = profile.get("workflow_name_field")
-    status_field = _best_status_field(profile)
+    status_field = _best_status_field(profile, prefer_deployment=True)
     time_field = profile.get("deployment_updated_field") or profile.get("workflow_start_field") or profile.get("primary_time_field")
     deploy_indicator_field = profile.get("deploy_indicator_field")
     if not repo_field or not workflow_field or not time_field or not deploy_indicator_field:
@@ -2790,7 +3582,7 @@ async def _answer_recent_rollback_listing(
             continue
         seen.add(unique_value)
         lines.append(
-            f"`{_dig(doc, repo_field) or '-'}` | workflow `{_dig(doc, workflow_field) or '-'}` | data `{_dig(doc, time_field) or '-'}` | status `{_dig(doc, status_field) or '-'}`"
+            f"`{_dig(doc, repo_field) or '-'}` | workflow `{_dig(doc, workflow_field) or '-'}` | data `{_format_datetime_local(_dig(doc, time_field))}` | status `{_dig(doc, status_field) or '-'}`"
         )
         if len(lines) == 8:
             break
@@ -3218,7 +4010,7 @@ async def _answer_last_prd_deploy_actor_email(
         f"{_emoji('people')} O email do analista que engatilhou o ultimo deploy em PRD"
         + (f" da esteira `{matched_workflow}`" if matched_workflow else "")
         + f" foi `{_dig(doc, email_field) or '-'}`"
-          f" ({_dig(doc, actor_field) or '-'}) no repositorio `{_dig(doc, repo_field) or '-'}` em `{_dig(doc, time_field) or '-'}`."
+          f" ({_dig(doc, actor_field) or '-'}) no repositorio `{_dig(doc, repo_field) or '-'}` em `{_format_datetime_local(_dig(doc, time_field))}`."
     )
     return {
         "answer": answer,
@@ -3310,7 +4102,7 @@ def _compute_success_rate_rows(
     counters = defaultdict(lambda: {"total": 0, "success": 0, "failure": 0})
     seen = set()
     success_values = {"success", "completed"}
-    failure_values = {"failure", "failed", "error", "timed_out"}
+    failure_values = {"failure", "failed", "error", "timed_out", "cancelled", "canceled"}
 
     for doc in docs:
         dimensions = dimension_getter(doc) if dimension_getter else _iter_dimension_values(_dig(doc, dimension_field))
@@ -3824,15 +4616,21 @@ async def _answer_generic_business_question(
 ) -> dict | None:
     q = _plain_text(question)
     intent = _extract_generic_intent(q)
-    if not intent:
-        return None
-
     dimension = _extract_dimension_config(q, profile)
     if not dimension:
         return None
 
+    if not intent:
+        if _is_inventory_style_question(q, dimension):
+            intent = "inventory"
+        else:
+            return None
+
     filters, any_filters, filter_labels = _extract_business_filters(q, config, profile, dimension["kind"])
     time_range = _extract_time_range(question, default="90d")
+
+    if intent == "count" and _should_count_executions(q, dimension):
+        intent = "execution_total"
 
     if intent == "volume":
         return await _answer_generic_volume_ranking(
@@ -3976,11 +4774,17 @@ async def _answer_generic_business_question(
 def _extract_generic_intent(q: str) -> str | None:
     if "quantas execucoes" in q or "quantidade de execucoes" in q:
         return "execution_total"
+    if any(term in q for term in ["quantos tipos", "quantas tipos", "quantidade de tipos"]):
+        return "count"
+    if any(term in q for term in ["quais os tipos", "quais as tipos", "quais tipos", "tipo de", "tipos de"]):
+        return "inventory"
     if "quantidade" in q or any(term in q for term in ["quantos", "quantas"]):
         return "count"
     if any(term in q for term in ["ja executaram", "executaram em algum momento", "existem na base", "temos na base", "ja tiveram execu", "historico de"]) and any(
         term in q for term in ["liste", "lista", "mostre", "informe", "quais"]
     ):
+        return "inventory"
+    if any(term in q for term in ["existem no ambiente", "existem hoje", "existem atualmente", "temos no ambiente", "temos hoje", "catalogo de", "catologo de"]):
         return "inventory"
     if any(term in q for term in ["disponiveis", "disponivel", "temos disponiveis", "temos disponivel"]):
         return "inventory"
@@ -3990,7 +4794,29 @@ def _extract_generic_intent(q: str) -> str | None:
         return "success_rate"
     if "taxa de falha" in q:
         return "failure_rate"
-    if any(term in q for term in ["mais falharam", "mais falha", "mais falham", "mais falhou", "executado com falha", "volume de falhas", "maior volume de falhas", "falharam", "falhou", "com falha"]):
+    if any(
+        term in q
+        for term in [
+            "mais falharam",
+            "mais falha",
+            "mais falham",
+            "mais falhou",
+            "executado com falha",
+            "volume de falhas",
+            "maior volume de falhas",
+            "falharam",
+            "falhou",
+            "com falha",
+            "apresenta falha",
+            "apresentam falha",
+            "apresenta falhas",
+            "apresentam falhas",
+            "mais apresentam falha",
+            "mais apresentam falhas",
+            "com mais falhas",
+            "mais erros",
+        ]
+    ):
         return "failure_count"
     if any(term in q for term in ["media de dur", "duracao media", "tempo medio", "media de execu"]):
         return "avg_duration"
@@ -4005,16 +4831,63 @@ def _extract_generic_intent(q: str) -> str | None:
     return None
 
 
+def _is_inventory_style_question(q: str, dimension: dict) -> bool:
+    if any(term in q for term in ["tipos de", "tipo de", "quais os tipos", "quais tipos"]):
+        return True
+    if any(term in q for term in ["disponiveis", "disponivel", "catalogo de", "catologo de"]):
+        return True
+    if dimension["kind"] in {"architecture", "topic", "language", "team", "workflow", "repository"} and any(
+        term in q for term in ["quais sao", "quais e", "existem", "temos"]
+    ):
+        metric_terms = [
+            "taxa",
+            "falha",
+            "sucesso",
+            "duracao",
+            "tempo medio",
+            "media",
+            "mais execut",
+            "menos execut",
+            "mais falh",
+            "menos falh",
+            "rodaram",
+            "executaram",
+            "ocorreram",
+        ]
+        return not any(term in q for term in metric_terms)
+    return False
+
+
+def _should_count_executions(q: str, dimension: dict) -> bool:
+    if dimension["kind"] not in {"workflow", "job"}:
+        return False
+    if any(term in q for term in ["tipos", "distintos", "diferentes", "existem", "temos", "disponiveis"]):
+        return False
+    return any(term in q for term in ["rodaram", "rodou", "executaram", "executou", "ocorreram", "aconteceram", "tiveram"])
+
+
 def _extract_dimension_config(q: str, profile: dict) -> dict | None:
-    mentions_specific_dimension = any(
-        term in q for term in ["workflow", "workflows", "job", "jobs", "check", "checks", "repositorio", "repositorios", "repo", "repos", "analista", "analistas", "branch", "branches", "linguagem", "linguagens", "ambiente", "ambientes", "topico", "topicos"]
+    mentions_workflow_dimension = any(term in q for term in ["workflow", "workflows", "esteira", "esteiras", "pipeline", "pipelines"])
+    mentions_job_dimension = any(term in q for term in ["job", "jobs", "check", "checks"])
+    mentions_repository_dimension = any(term in q for term in ["repositorio", "repositorios", "repo", "repos"])
+    mentions_actor_dimension = any(term in q for term in ["analista", "analistas"])
+    mentions_branch_dimension = any(term in q for term in ["branch", "branches"])
+    mentions_environment_dimension = any(term in q for term in ["ambiente", "ambientes"])
+    mentions_language_dimension = any(term in q for term in ["linguagem", "linguagens", "tecnologia", "tecnologias"])
+    mentions_topic_dimension = any(term in q for term in ["topico", "topicos"])
+    mentions_competing_dimension = any(
+        [
+            mentions_workflow_dimension,
+            mentions_job_dimension,
+            mentions_repository_dimension,
+            mentions_actor_dimension,
+            mentions_branch_dimension,
+            mentions_language_dimension,
+            mentions_topic_dimension,
+        ]
     )
-    asks_architecture_dimension = any(term in q for term in ["arquiteturas", "architectures"]) or (
-        any(term in q for term in ["arquitetura", "architecture"]) and not mentions_specific_dimension
-    )
-    asks_team_dimension = any(term in q for term in ["times", "vskeys", "squads"]) or (
-        any(term in q for term in ["time", "vskey", "squad"]) and not mentions_specific_dimension
-    )
+    asks_architecture_dimension = any(term in q for term in ["arquitetura", "arquiteturas", "architecture", "architectures"]) and not mentions_competing_dimension
+    asks_team_dimension = any(term in q for term in ["time", "times", "vskey", "vskeys", "squad", "squads"]) and not mentions_competing_dimension
 
     if asks_architecture_dimension:
         field = profile.get("repository_topic_field")
@@ -4024,6 +4897,12 @@ def _extract_dimension_config(q: str, profile: dict) -> dict | None:
         field = profile.get("repository_name_field")
         if field:
             return {"kind": "team", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "times"}
+    explicit_target_dimension = (
+        mentions_repository_dimension
+        or mentions_actor_dimension
+        or mentions_job_dimension
+        or mentions_workflow_dimension
+    )
     asks_topics = any(
         pattern in q
         for pattern in [
@@ -4036,31 +4915,31 @@ def _extract_dimension_config(q: str, profile: dict) -> dict | None:
             "topicos menos",
         ]
     )
-    if asks_topics:
+    if asks_topics and not explicit_target_dimension:
         field = profile.get("repository_topic_field")
         if field:
             return {"kind": "topic", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "topicos"}
-    if any(term in q for term in ["linguagem", "linguagens", "tecnologia", "tecnologias"]):
+    if mentions_language_dimension and not explicit_target_dimension:
         field = profile.get("repository_language_field")
         if field:
             return {"kind": "language", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "linguagens"}
-    if any(term in q for term in ["branch", "branches"]):
+    if mentions_branch_dimension and not explicit_target_dimension:
         field = profile.get("branch_field")
         if field:
             return {"kind": "branch", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "branches"}
-    if any(term in q for term in ["ambiente", "ambientes"]):
+    if mentions_environment_dimension and not explicit_target_dimension:
         field = profile.get("environment_field")
         if field:
             return {"kind": "environment", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "ambientes"}
-    if any(term in q for term in ["repositorio", "repositorios", "repo", "repos"]):
+    if mentions_repository_dimension:
         field = profile.get("repository_name_field")
         if field:
             return {"kind": "repository", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "repositorios"}
-    if any(term in q for term in ["analista", "analistas"]):
+    if mentions_actor_dimension:
         field = profile.get("actor_field")
         if field:
             return {"kind": "actor", "field": field, "unique_field": profile.get("workflow_execution_id_field"), "label": "analistas", "exclude_bots": True}
-    if any(term in q for term in ["job", "jobs", "check", "checks"]):
+    if mentions_job_dimension:
         field = profile.get("job_name_field")
         if field:
             return {"kind": "job", "field": field, "unique_field": profile.get("job_execution_id_field"), "label": "jobs"}
@@ -4074,6 +4953,7 @@ def _extract_business_filters(q: str, config: dict, profile: dict, dimension_kin
     filters = {}
     any_filters = {}
     labels = []
+    semantic_q = q
 
     env_filters, env_any_filters, env_labels = extract_environment_semantics(q, config, profile)
     filters.update(env_filters)
@@ -4082,18 +4962,16 @@ def _extract_business_filters(q: str, config: dict, profile: dict, dimension_kin
 
     language_field = profile.get("repository_language_field")
     if language_field:
-        for language in ["java", "python", "typescript", "node"]:
-            if re.search(rf"\b{re.escape(language)}\b", q):
-                filters[language_field] = language
-                labels.append(f"linguagem {language}")
-                break
+        explicit_language = _extract_language_candidate(q)
+        if explicit_language:
+            filters[language_field] = _case_variants(explicit_language)
+            labels.append(f"linguagem {explicit_language}")
 
     topic_field = profile.get("repository_topic_field")
     if topic_field:
-        match = re.search(r"topicos?\s+([a-z0-9._-]+)", q)
-        if match:
-            topic = match.group(1)
-            filters[topic_field] = topic
+        topic = _extract_named_filter_value(q, ["topico", "topicos", "topic", "topics"])
+        if topic:
+            filters[topic_field] = [topic, topic.lower()]
             labels.append(f"topico {topic}")
 
     architecture_filters, architecture_labels = extract_architecture_filter(q, config, topic_field)
@@ -4116,33 +4994,30 @@ def _extract_business_filters(q: str, config: dict, profile: dict, dimension_kin
 
     branch_field = profile.get("branch_field")
     if branch_field:
-        branch_match = re.search(r"branch\s+([a-z0-9._/-]+)", q)
-        if branch_match:
-            branch = branch_match.group(1)
-            filters[branch_field] = branch
+        branch = _extract_branch_candidate(q)
+        if branch:
+            filters[branch_field] = _case_variants(branch)
             labels.append(f"branch {branch}")
-        elif re.search(r"\bmain\b", q):
-            filters[branch_field] = "main"
-            labels.append("branch main")
-        elif re.search(r"\bdevelop\b", q):
-            filters[branch_field] = "develop"
-            labels.append("branch develop")
+            semantic_q = re.sub(re.escape(branch.lower()), " ", semantic_q)
 
     workflow_field = profile.get("workflow_name_field")
     job_field = profile.get("job_name_field")
-    workflow_patterns = extract_pipeline_type_patterns(q, config)
+    workflow_patterns = extract_pipeline_type_patterns(semantic_q, config)
     if workflow_patterns:
         if dimension_kind == "job" and job_field:
             filters[job_field] = workflow_patterns
-        elif workflow_field:
-            filters[workflow_field] = workflow_patterns
+        else:
+            if workflow_field:
+                any_filters[workflow_field] = list(dict.fromkeys(any_filters.get(workflow_field, []) + workflow_patterns))
+            if job_field:
+                any_filters[job_field] = list(dict.fromkeys(any_filters.get(job_field, []) + workflow_patterns))
         labels.append("tipo de esteira filtrado")
 
-    if job_field and "gate" in q:
+    if job_field and "gate" in semantic_q:
         any_filters[job_field] = list(dict.fromkeys(any_filters.get(job_field, []) + ["*gate*", "*approval*"]))
         labels.append("etapas gate")
 
-    team_filters, team_labels = extract_team_filter(q, config, profile.get("repository_name_field"))
+    team_filters, team_labels = extract_team_filter(semantic_q, config, profile.get("repository_name_field"))
     filters.update(team_filters)
     labels.extend(team_labels)
 
@@ -4218,6 +5093,12 @@ def _dimension_values(doc: dict, dimension: dict) -> list[str]:
     if kind == "team":
         value = _extract_team_from_repo_name(_dig(doc, dimension["field"]))
         return [value] if value else []
+    if kind == "topic":
+        return [
+            str(topic)
+            for topic in _iter_dimension_values(_dig(doc, dimension["field"]))
+            if topic and not str(topic).lower().startswith(("archtecture-", "architecture-"))
+        ]
     return _iter_dimension_values(_dig(doc, dimension["field"]))
 
 
@@ -4452,11 +5333,15 @@ async def _answer_generic_inventory(
     filter_labels: list[str],
 ) -> dict | None:
     time_field = profile.get("workflow_start_field") or profile.get("primary_time_field")
+    repo_field = profile.get("repository_name_field")
+    fields = _dimension_source_fields(dimension, profile)
+    if repo_field and repo_field not in fields:
+        fields = fields + [repo_field]
     docs = await _fetch_documents(
         mcp_session,
         call_tool,
         time_range=time_range,
-        fields=_dimension_source_fields(dimension, profile),
+        fields=fields,
         filters=filters,
         any_filters=any_filters,
         sort=f"{time_field}:desc" if time_field else None,
@@ -4481,8 +5366,24 @@ async def _answer_generic_inventory(
                 "sections": [],
             },
         }
-    preview = values[:20] if _wants_list_output(question) else values[:12]
+    repo_counts = {}
+    if repo_field and dimension["kind"] in {"architecture", "topic", "language", "team"}:
+        grouped_repos = defaultdict(set)
+        for doc in docs:
+            repo_value = _dig(doc, repo_field)
+            if not repo_value:
+                continue
+            for value in _dimension_values(doc, dimension):
+                if value and not (dimension.get("exclude_bots") and "[bot]" in value.lower()):
+                    grouped_repos[value].add(str(repo_value))
+        repo_counts = {value: len(grouped_repos.get(value, set())) for value in values}
+
+    preview_values = values[:20] if _wants_list_output(question) else values[:12]
     context = f" com filtro de {', '.join(filter_labels)}" if filter_labels else ""
+    if repo_counts:
+        preview = [f"{value} ({repo_counts.get(value, 0)} projetos)" for value in preview_values]
+    else:
+        preview = preview_values
     if _wants_list_output(question):
         answer = (
             f"{_emoji('summary')} Lista de {dimension['label']}{context} observados no periodo `{time_range}`:\n"
@@ -4648,7 +5549,7 @@ async def _answer_generic_failure_ranking(
         exclude_bots=dimension.get("exclude_bots", False),
         dimension_getter=(lambda doc: _dimension_values(doc, dimension)),
     )
-    rows = [row for row in rows if row["total"] > 0]
+    rows = [row for row in rows if row["total"] > 0 and row["failure"] > 0]
     if not rows:
         context = f" com filtro de {', '.join(filter_labels)}" if filter_labels else ""
         return {

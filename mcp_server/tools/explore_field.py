@@ -12,12 +12,14 @@ from schema_utils import (
     resolve_agg_field,
     resolve_exact_field,
 )
+from tools.time_filters import build_time_range_clause
 
 
 def explore_field(
     config:      dict,
     field:       str,
     time_range:  str        = None,
+    time_field:  str        = None,
     filters:     dict       = None,
     size:        int        = 200,
     include_count: bool     = True,
@@ -26,7 +28,7 @@ def explore_field(
     index = get_index(config)
     schema = load_index_schema(config, es=es, index=index)
 
-    time_field   = config.get("elasticsearch", {}).get("time_field", "workflow_run.started_at")
+    time_field   = time_field or config.get("elasticsearch", {}).get("time_field", "workflow_run.started_at")
     time_range   = time_range or config.get("elasticsearch", {}).get("default_time_range", "7d")
     filters      = filters or {}
 
@@ -58,6 +60,7 @@ def explore_field(
             "resolved_field": resolved_field,
             "is_nested":  is_nested,
             "time_range": time_range,
+            "time_field": time_field,
             "filters":    filters,
             "total":      len(values),
             "values":     values,
@@ -74,7 +77,7 @@ def _build_base_query(
     nested_path: str | None,
     schema: dict,
 ) -> dict:
-    must = [{"range": {time_field: {"gte": f"now-{time_range}", "lte": "now"}}}]
+    must = [build_time_range_clause(time_field, time_range)]
 
     for f, v in filters.items():
         field_nested = get_nested_path(f, {"nested_paths": [nested_path]} if nested_path else {"nested_paths": []})

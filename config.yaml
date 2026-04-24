@@ -80,10 +80,6 @@ domain:
     "deploys":     "campos deployment.* ou nomes de workflow/check contendo deploy"
     "workflow":    "campos workflow_run.* ou workflow.*"
     "build":       "campos check_run.name ou jobs.name contendo build ou compile"
-    "java":        "repository.language = java quando disponível"
-    "node":        "repository.language = node quando disponível"
-    "nodejs":      "repository.language = node quando disponível"
-    "apim":        "topicos de arquitetura contendo archtecture-apim ou architecture-apim"
     "recorrente":  "use um período maior como 30d ou 90d"
     "recorrentes": "use um período maior como 30d ou 90d"
     "recurrente":  "use um período maior como 30d ou 90d"
@@ -105,11 +101,6 @@ domain:
         - "architectures"
         - "esteira"
         - "esteiras"
-      known_values:
-        - "api"
-        - "srv"
-        - "bff"
-        - "apim"
       value_templates:
         - "archtecture-{value}"
         - "architecture-{value}"
@@ -143,6 +134,16 @@ domain:
         aliases: ["hml", "hom", "homolog", "homologacao", "homologação"]
         exact_values: ["HML", "HOM", "HOMOLOG"]
         contains_tokens: ["hml", "hom", "homolog", "staging", "stg"]
+        field_preferences:
+          - "environment_field"
+          - "workflow_name_field"
+          - "job_name_field"
+          - "branch_field"
+      stg:
+        label: "ambiente STG"
+        aliases: ["stg", "staging"]
+        exact_values: ["STG", "STAGING"]
+        contains_tokens: ["stg", "staging"]
         field_preferences:
           - "environment_field"
           - "workflow_name_field"

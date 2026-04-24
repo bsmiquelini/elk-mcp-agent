@@ -13,26 +13,23 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "mcp_server"))
 
 from config_loader import load_config
 from elastic_client import get_client, get_index
+from generate_department_question_catalog import build_catalog, discover_context
 
 
 SUCCESS_VALUES = {"success", "completed"}
 FAILURE_VALUES = {"failure", "failed", "error", "timed_out", "cancelled", "canceled"}
-PERIODS = [("7d", "ultimos 7 dias"), ("30d", "ultimo mes"), ("90d", "ultimos 90 dias")]
-ARCHITECTURES = ["api", "srv", "bff", "apim"]
-TEAMS = ["arch", "devops", "ia", "sre"]
-ENVS = ["PRD", "HML", "DEV"]
-LANGUAGES = [("Java", "java"), ("Python", "python"), ("TypeScript", "typescript"), ("Node", "node")]
-WORKFLOW_TYPES = ["build", "deploy", "security", "rollback"]
-TOPICS = ["api", "risk", "frontend", "apim"]
 CLI_TIMEOUT_SECONDS = int(os.getenv("CLI_TEST_TIMEOUT_SECONDS", "120"))
+APP_TZ = ZoneInfo("America/Sao_Paulo")
+APP_TZ_NAME = "America/Sao_Paulo"
 
 
 @dataclass
@@ -55,6 +52,7 @@ class Spec:
     workflow_name: str | None = None
     anchor_kind: str | None = None
     target_env: str | None = None
+    branch: str | None = None
 
 
 def assert_true(condition: bool, message: str):
@@ -99,8 +97,8 @@ def cli_output(question: str) -> tuple[float, str, str]:
     return elapsed, raw, packed
 
 
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+def now_local() -> datetime:
+    return datetime.now(APP_TZ)
 
 
 def parse_iso(value: str | None) -> datetime | None:
@@ -110,6 +108,27 @@ def parse_iso(value: str | None) -> datetime | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def to_app_timezone(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(APP_TZ)
+
+
+def format_local_datetime(value: datetime | str | None) -> str:
+    if value in (None, ""):
+        return "-"
+    dt = value if isinstance(value, datetime) else parse_iso(str(value))
+    if not dt:
+        return str(value)
+    local_dt = to_app_timezone(dt)
+    offset = local_dt.strftime("%z")
+    if len(offset) == 5:
+        offset = f"{offset[:3]}:{offset[3:]}"
+    return f"{local_dt.strftime('%Y-%m-%d %H:%M:%S')} {offset} ({APP_TZ_NAME})"
 
 
 def dig(data: dict, field: str | None):
@@ -124,10 +143,19 @@ def dig(data: dict, field: str | None):
 
 
 def time_delta_for(time_range: str) -> timedelta:
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", time_range):
+        return timedelta(days=1)
+    if ".." in time_range:
+        start_raw, end_raw = time_range.split("..", 1)
+        start_day = date.fromisoformat(start_raw)
+        end_day = date.fromisoformat(end_raw)
+        return timedelta(days=abs((end_day - start_day).days) + 1)
     value = int(time_range[:-1])
     unit = time_range[-1]
     if unit == "d":
         return timedelta(days=value)
+    if unit == "h":
+        return timedelta(hours=value)
     raise ValueError(f"time_range não suportado: {time_range}")
 
 
@@ -139,7 +167,17 @@ def in_time_range(doc: dict, time_range: str) -> bool:
     dt = document_time(doc)
     if not dt:
         return False
-    return dt >= (now_utc() - time_delta_for(time_range))
+    local_dt = to_app_timezone(dt)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", time_range):
+        return bool(local_dt and local_dt.date() == date.fromisoformat(time_range))
+    if ".." in time_range:
+        start_raw, end_raw = time_range.split("..", 1)
+        start_day = date.fromisoformat(start_raw)
+        end_day = date.fromisoformat(end_raw)
+        if end_day < start_day:
+            start_day, end_day = end_day, start_day
+        return bool(local_dt and start_day <= local_dt.date() <= end_day)
+    return bool(local_dt and local_dt >= (now_local() - time_delta_for(time_range)))
 
 
 def team_from_repo(doc: dict) -> str | None:
@@ -193,11 +231,13 @@ def env_matches(doc: dict, env: str) -> bool:
         "PRD": {"PRD", "PROD", "PRODUCTION"},
         "HML": {"HML", "HOM", "HOMOLOG"},
         "DEV": {"DEV", "SANDBOX", "DEVELOP"},
+        "STG": {"STG", "STAGING"},
     }
     token_map = {
         "PRD": ["prd", "prod", "production", "release"],
         "HML": ["hml", "hom", "homolog", "staging", "stg"],
         "DEV": ["dev", "sandbox", "develop"],
+        "STG": ["stg", "staging"],
     }
     exact_raw = str(dig(doc, "deployment.environment") or dig(doc, "deployment_status.environment") or "")
     if exact_raw:
@@ -209,7 +249,9 @@ def status_for(doc: dict, dimension: str | None, prefer_deployment: bool) -> str
     if dimension == "job":
         return str(dig(doc, "check_run.conclusion") or dig(doc, "check_run.status") or "").lower()
     if prefer_deployment:
-        return str(dig(doc, "deployment_status.state") or "").lower()
+        deployment_status = str(dig(doc, "deployment_status.state") or "").lower()
+        if deployment_status:
+            return deployment_status
     return str(dig(doc, "workflow_run.conclusion") or dig(doc, "workflow_run.status") or "").lower()
 
 
@@ -231,6 +273,8 @@ def matches(doc: dict, spec: Spec) -> bool:
         elif not env_matches(doc, spec.env):
             return False
     if spec.language and str(dig(doc, "repository.language") or "").lower() != spec.language.lower():
+        return False
+    if spec.branch and str(dig(doc, "workflow_run.head_branch") or "").lower() != spec.branch.lower():
         return False
     if spec.workflow_type and not text_contains_type(doc, spec.workflow_type, dimension=spec.dimension):
         return False
@@ -258,6 +302,24 @@ def dimension_values(doc: dict, dimension: str) -> list[str]:
         return [value] if value else []
     if dimension == "architecture":
         return architectures_from_doc(doc)
+    if dimension == "topic":
+        topics = dig(doc, "repository.topics") or []
+        if not isinstance(topics, list):
+            topics = [topics]
+        return [
+            str(topic).lower()
+            for topic in topics
+            if topic and not str(topic).lower().startswith(("archtecture-", "architecture-"))
+        ]
+    if dimension == "language":
+        value = dig(doc, "repository.language")
+        return [str(value).lower()] if value else []
+    if dimension == "branch":
+        value = dig(doc, "workflow_run.head_branch")
+        return [str(value)] if value else []
+    if dimension == "environment":
+        value = dig(doc, "deployment.environment") or dig(doc, "deployment_status.environment")
+        return [str(value).upper()] if value else []
     raise ValueError(f"Dimensão não suportada: {dimension}")
 
 
@@ -271,6 +333,15 @@ def unique_id_for(doc: dict, dimension: str | None) -> str | None:
 
 def filtered_docs(all_docs: list[dict], spec: Spec) -> list[dict]:
     return [doc for doc in all_docs if matches(doc, spec)]
+
+
+def execution_total(all_docs: list[dict], spec: Spec) -> int:
+    unique_ids = set()
+    for doc in filtered_docs(all_docs, spec):
+        unique_id = unique_id_for(doc, spec.dimension)
+        if unique_id is not None:
+            unique_ids.add(unique_id)
+    return len(unique_ids)
 
 
 def format_duration(seconds: float | None) -> str:
@@ -370,12 +441,13 @@ def distinct_values(all_docs: list[dict], spec: Spec) -> list[str]:
 def status_mix(all_docs: list[dict], spec: Spec) -> tuple[int, int, int]:
     seen = set()
     success = failure = other = 0
+    prefer_deployment = "deploy" in spec.question.lower()
     for doc in filtered_docs(all_docs, spec):
         unique_id = unique_id_for(doc, spec.dimension)
         if unique_id is None or unique_id in seen:
             continue
         seen.add(unique_id)
-        status = status_for(doc, spec.dimension, prefer_deployment=True)
+        status = status_for(doc, spec.dimension, prefer_deployment=prefer_deployment)
         if status in SUCCESS_VALUES:
             success += 1
         elif status in FAILURE_VALUES:
@@ -548,7 +620,9 @@ def analysts_for_workflow(all_docs: list[dict], spec: Spec) -> list[str]:
 def validate_output(all_docs: list[dict], spec: Spec, raw: str, packed: str):
     if spec.kind == "rank_volume":
         rows = top_counts(all_docs, spec)
-        assert_true(bool(rows), f"Sem linhas para validar: {spec.question}")
+        if not rows:
+            assert_true("0" in packed, f"Esperava resposta zerada: {spec.question}\n{raw}")
+            return
         label, count = rows[0]
         assert_true(contains_fragment(packed, label), f"Rótulo esperado ausente: {label}\n{raw}")
         assert_true(str(count) in raw, f"Contagem esperada ausente: {count}\n{raw}")
@@ -595,12 +669,19 @@ def validate_output(all_docs: list[dict], spec: Spec, raw: str, packed: str):
         assert_true(str(len(values)) in packed, f"Contagem esperada ausente: {len(values)}\n{raw}")
         return
 
+    if spec.kind == "execution_total":
+        total = execution_total(all_docs, spec)
+        assert_true(str(total) in packed, f"Total esperado ausente: {total}\n{raw}")
+        return
+
     if spec.kind == "status_mix":
         success, failure, other = status_mix(all_docs, spec)
-        total = success + failure + other
-        assert_true(str(total) in packed, f"Total esperado ausente: {total}\n{raw}")
+        considered_total = success + failure
+        assert_true(str(considered_total) in packed, f"Total esperado ausente: {considered_total}\n{raw}")
         assert_true(str(success) in packed, f"Sucessos esperados ausentes: {success}\n{raw}")
         assert_true(str(failure) in packed, f"Falhas esperadas ausentes: {failure}\n{raw}")
+        if other > 0:
+            assert_true("apenas execucoes concluidas em sucesso ou falha" in packed.lower(), f"Contexto sobre outros estados ausente: {raw}")
         return
 
     if spec.kind == "latest_failure":
@@ -615,7 +696,9 @@ def validate_output(all_docs: list[dict], spec: Spec, raw: str, packed: str):
 
     if spec.kind == "recent_list":
         docs = recent_docs(all_docs, spec, limit=1)
-        assert_true(bool(docs), f"Sem linhas recentes: {spec.question}")
+        if not docs:
+            assert_true("0" in packed, f"Esperava resposta zerada: {spec.question}\n{raw}")
+            return
         for doc in docs:
             repo = str(dig(doc, "repository.full_name"))
             workflow = str(dig(doc, "workflow_run.name"))
@@ -693,155 +776,51 @@ def validate_output(all_docs: list[dict], spec: Spec, raw: str, packed: str):
     raise AssertionError(f"Kind não suportado: {spec.kind}")
 
 
-def period_phrase(time_range: str) -> str:
-    mapping = {"7d": "ultimos 7 dias", "30d": "ultimo mes", "90d": "ultimos 90 dias"}
-    return mapping[time_range]
-
-
-def build_specs() -> list[Spec]:
-    specs: list[Spec] = []
-
-    specs.extend(
-        [
-            Spec("liste os repositorios que ja executaram workflows em algum momento", "inventory", dimension="repository", time_range="365d", list_mode=True, top_n=20),
-            Spec("Mostre os repositorios que ja executaram workflows na base", "inventory", dimension="repository", time_range="365d", list_mode=True, top_n=20),
-            Spec("Informe os repositorios que ja executaram workflows historicamente", "inventory", dimension="repository", time_range="365d", list_mode=True, top_n=20),
-            Spec("Liste os repositorios que ja executaram workflows ate hoje", "inventory", dimension="repository", time_range="365d", list_mode=True, top_n=20),
-            Spec("Liste a quantidade de times que ja executaram esteiras", "count", dimension="team", time_range="365d"),
-            Spec("Quantos repositorios temos com execucoes de workflows", "count", dimension="repository", time_range="365d"),
-            Spec("Quais arquiteturas executaram deploy no ultimo mes?", "rank_volume", dimension="architecture", workflow_type="deploy", time_range="30d"),
-            Spec("Quais arquiteturas executaram deploy em PRD no ultimo mes?", "rank_volume", dimension="architecture", workflow_type="deploy", env="PRD", time_range="30d"),
-            Spec("Quais arquiteturas executaram deploy em HML no ultimo mes?", "rank_volume", dimension="architecture", workflow_type="deploy", env="HML", time_range="30d"),
-            Spec("Quais arquiteturas executaram deploy em DEV no ultimo mes?", "rank_volume", dimension="architecture", workflow_type="deploy", env="DEV", time_range="30d"),
-            Spec("Quais arquiteturas falharam no build no ultimo mes?", "rank_failure", dimension="architecture", workflow_type="build", time_range="30d"),
-            Spec("Qual foi o ultimo workflow que falhou em produção?", "latest_failure", dimension="workflow", env="PRD", failure_only=True, time_range="365d"),
-            Spec("Qual foi o ultimo workflow que falhou em homologacao?", "latest_failure", dimension="workflow", env="HML", failure_only=True, time_range="365d"),
-            Spec("Qual foi o ultimo workflow que falhou em dev?", "latest_failure", dimension="workflow", env="DEV", failure_only=True, time_range="365d"),
-            Spec("Liste os repositorios que falharam na ultima semana", "recent_list", dimension="repository", failure_only=True, time_range="7d", list_mode=True),
-            Spec("Liste os ultimos projetos que tiveram deploy com falha", "recent_list", dimension="repository", workflow_type="deploy", failure_only=True, time_range="30d", list_mode=True),
-            Spec("Liste os ultimos projetos que tiveram deploy com falha em PRD", "recent_list", dimension="repository", workflow_type="deploy", env="PRD", failure_only=True, time_range="30d", list_mode=True),
-            Spec("Quais os ultimos deploys das esteiras de bff?", "recent_list", dimension="repository", architecture="bff", workflow_type="deploy", time_range="30d", list_mode=True),
-            Spec("Quais os ultimos deploys das esteiras de api?", "recent_list", dimension="repository", architecture="api", workflow_type="deploy", time_range="30d", list_mode=True),
-            Spec("Mostre os ultimos deploys das esteiras de apim", "recent_list", dimension="repository", architecture="apim", workflow_type="deploy", time_range="30d", list_mode=True),
-            Spec("Mostre os ultimos deploys das esteiras de srv", "recent_list", dimension="repository", architecture="srv", workflow_type="deploy", time_range="30d", list_mode=True),
-            Spec("Informe os repositorios que falharam na ultima semana", "recent_list", dimension="repository", failure_only=True, time_range="7d", list_mode=True),
-            Spec("Quais os times que mais falharam em etapas de build e gate?", "rank_failure_loose", dimension="team", workflow_type="build", time_range="90d"),
-            Spec("Qual a porcentagem de falha e sucesso em deploys do time de devops?", "status_mix", dimension="workflow", team="devops", workflow_type="deploy", time_range="90d"),
-            Spec("Qual a porcentagem de falha e sucesso em deploys do time de ia?", "status_mix", dimension="workflow", team="ia", workflow_type="deploy", time_range="90d"),
-            Spec("Quais arquiteturas executaram deploy em PRD nos ultimos 90 dias?", "rank_volume", dimension="architecture", workflow_type="deploy", env="PRD", time_range="90d"),
-            Spec("Quais arquiteturas executaram deploy em HML nos ultimos 90 dias?", "rank_volume", dimension="architecture", workflow_type="deploy", env="HML", time_range="90d"),
-            Spec("Quais arquiteturas executaram deploy em DEV nos ultimos 90 dias?", "rank_volume", dimension="architecture", workflow_type="deploy", env="DEV", time_range="90d"),
-            Spec("Quanto tempo leva a execucao media de esteiras de rollback?", "avg_rollback_duration", dimension="workflow", workflow_type="rollback", time_range="90d"),
-            Spec("Quais esteiras realizaram rollback nos ultimos 30 dias?", "recent_list", dimension="repository", workflow_type="rollback", time_range="30d", list_mode=True),
-            Spec("Quais esteiras executaram mais de um rollback nos ultimos 50 dias?", "multiple_rollbacks", dimension="repository", workflow_type="rollback", time_range="50d"),
-            Spec("Qual e a frequencia de deploy da arquitetura api?", "frequency", dimension="workflow", architecture="api", workflow_type="deploy", time_range="90d"),
-            Spec("Qual e a frequencia de deploy da arquitetura srv?", "frequency", dimension="workflow", architecture="srv", workflow_type="deploy", time_range="90d"),
-            Spec("Qual e a frequencia de deploy do time devops?", "frequency", dimension="workflow", team="devops", workflow_type="deploy", time_range="90d"),
-            Spec("Qual e a frequencia de deploy da esteira Deploy Staging?", "frequency", dimension="workflow", workflow_name="Deploy Staging", workflow_type="deploy", time_range="90d"),
-            Spec("Quanto tempo leva em media entre o primeiro deploy em DEV e o primeiro deploy em PRD?", "dev_prd_gap", dimension="repository", workflow_type="deploy", time_range="365d"),
-            Spec("Em media quantos deploys em DEV ocorrem para o deploy em PRD?", "dev_before_promotion", dimension="repository", workflow_type="deploy", target_env="PRD", time_range="365d"),
-            Spec("Quantos times trabalham com as esteiras da arquitetura api?", "count", dimension="team", architecture="api", time_range="90d"),
-            Spec("Quais o email dos analistas incluidos nos deploys da arquitetura api?", "email_inventory", dimension="workflow", architecture="api", workflow_type="deploy", time_range="90d"),
-            Spec("Quais o email dos analistas incluidos nos deploys da arquitetura bff?", "email_inventory", dimension="workflow", architecture="bff", workflow_type="deploy", time_range="90d"),
-            Spec("Qual o email do analista que engatilhou o ultimo deploy em PRD da esteira Deploy Staging?", "last_email", dimension="workflow", workflow_name="Deploy Staging", env="PRD", workflow_type="deploy", time_range="365d"),
-            Spec("Quais os analistas que estao trabalhando na esteira Deploy Staging?", "analysts_inventory", dimension="workflow", workflow_name="Deploy Staging", time_range="90d"),
-            Spec("Qual foi o tempo entre a abertura do chamado do repositorio nada/arch-api-cash-cambio-contatos-ext e a primeira entrega em PRD?", "anchor_lead_time", dimension="repository", repo_name="nada/arch-api-cash-cambio-contatos-ext", env="PRD", workflow_type="deploy", time_range="365d", anchor_kind="repository_request"),
-            Spec("Qual foi o tempo entre a solicitacao de habilitacao da esteira do repositorio nada/devops-bff-pix-web e a primeira entrega em HML?", "anchor_lead_time", dimension="repository", repo_name="nada/devops-bff-pix-web", env="HML", workflow_type="deploy", time_range="365d", anchor_kind="pipeline_request"),
-            Spec("Quanto tempo entre a criacao da esteira Rollback Production e o primeiro deploy em PRD?", "anchor_lead_time", dimension="workflow", workflow_name="Rollback Production", env="PRD", workflow_type="rollback", time_range="365d", anchor_kind="workflow_created"),
-            Spec("Qual e a frequencia de deploy da arquitetura bff?", "frequency", dimension="workflow", architecture="bff", workflow_type="deploy", time_range="90d"),
-            Spec("Quais esteiras realizaram rollback nos ultimos 90 dias?", "recent_list", dimension="repository", workflow_type="rollback", time_range="90d", list_mode=True),
-            Spec("Qual o email do analista que engatilhou o ultimo deploy em PRD da esteira Axway Deploy Release?", "last_email", dimension="workflow", workflow_name="Axway Deploy Release", env="PRD", workflow_type="deploy", time_range="365d"),
-        ]
+def spec_from_item(item: dict) -> Spec:
+    return Spec(
+        question=item["question"],
+        kind=item["kind"],
+        dimension=item.get("dimension"),
+        time_range=item.get("time_range", "30d"),
+        architecture=item.get("architecture"),
+        team=item.get("team"),
+        env=item.get("env"),
+        language=item.get("language"),
+        workflow_type=item.get("workflow_type"),
+        topic=item.get("topic"),
+        failure_only=item.get("failure_only", False),
+        success_rate=item.get("success_rate", False),
+        list_mode=item.get("list_mode", False),
+        top_n=item.get("top_n", 5),
+        repo_name=item.get("repo_name"),
+        workflow_name=item.get("workflow_name"),
+        anchor_kind=item.get("anchor_kind"),
+        target_env=item.get("target_env"),
+        branch=item.get("branch"),
     )
 
-    for arch in ARCHITECTURES:
-        for time_range, phrase in PERIODS:
-            specs.extend(
-                [
-                    Spec(f"Quais workflows da arquitetura de {arch} foram executados nos {phrase}?", "rank_volume", dimension="workflow", architecture=arch, time_range=time_range),
-                    Spec(f"Quais workflows da arquitetura de {arch} mais falharam nos {phrase}?", "rank_failure", dimension="workflow", architecture=arch, time_range=time_range),
-                    Spec(f"Quais workflows da arquitetura de {arch} tem maior taxa de sucesso nos {phrase}?", "rank_success", dimension="workflow", architecture=arch, time_range=time_range),
-                    Spec(f"Quais repositorios da arquitetura de {arch} mais executaram workflows nos {phrase}?", "rank_volume", dimension="repository", architecture=arch, time_range=time_range),
-                    Spec(f"Quais jobs da arquitetura de {arch} mais executaram workflows nos {phrase}?", "rank_volume", dimension="job", architecture=arch, time_range=time_range),
-                ]
-            )
 
-    for team in TEAMS:
-        for time_range, phrase in PERIODS:
-            specs.extend(
-                [
-                    Spec(f"Quais workflows do time {team} mais executaram nos {phrase}?", "rank_volume", dimension="workflow", team=team, time_range=time_range),
-                    Spec(f"Quais workflows do time {team} mais falharam nos {phrase}?", "rank_failure", dimension="workflow", team=team, time_range=time_range),
-                    Spec(f"Quais repositorios do time {team} mais executaram workflows nos {phrase}?", "rank_volume", dimension="repository", team=team, time_range=time_range),
-                    Spec(f"Qual a porcentagem de falha e sucesso em deploys do time de {team} nos {phrase}?", "status_mix", dimension="workflow", team=team, workflow_type="deploy", time_range=time_range),
-                ]
-            )
-
-    for env in ENVS:
-        for time_range, phrase in PERIODS:
-            specs.extend(
-                [
-                    Spec(f"Quais workflows mais executaram em {env} nos {phrase}?", "rank_volume", dimension="workflow", env=env, time_range=time_range),
-                    Spec(f"Quais workflows com maior volume de falhas em {env} nos {phrase}?", "rank_failure", dimension="workflow", env=env, time_range=time_range),
-                    Spec(f"Quais repositorios mais executaram workflows em {env} nos {phrase}?", "rank_volume", dimension="repository", env=env, time_range=time_range),
-                    Spec(f"Quais jobs com maior volume de falhas em {env} nos {phrase}?", "rank_failure", dimension="job", env=env, time_range=time_range),
-                ]
-            )
-
-    for display_language, language in LANGUAGES:
-        for time_range, phrase in PERIODS:
-            specs.extend(
-                [
-                    Spec(f"Quais workflows {display_language} mais executaram nos {phrase}?", "rank_volume", dimension="workflow", language=language, time_range=time_range),
-                    Spec(f"Quais repositorios {display_language} mais executaram workflows nos {phrase}?", "rank_volume", dimension="repository", language=language, time_range=time_range),
-                    Spec(f"Quais workflows {display_language} com maior taxa de sucesso nos {phrase}?", "rank_success", dimension="workflow", language=language, time_range=time_range),
-                ]
-            )
-
-    for workflow_type in WORKFLOW_TYPES:
-        for time_range, phrase in PERIODS:
-            specs.extend(
-                [
-                    Spec(f"Quais workflows de {workflow_type} mais executaram nos {phrase}?", "rank_volume", dimension="workflow", workflow_type=workflow_type, time_range=time_range),
-                    Spec(f"Quais workflows de {workflow_type} com maior taxa de sucesso nos {phrase}?", "rank_success", dimension="workflow", workflow_type=workflow_type, time_range=time_range),
-                    Spec(f"Quais jobs de {workflow_type} mais executaram nos {phrase}?", "rank_volume", dimension="job", workflow_type=workflow_type, time_range=time_range),
-                ]
-            )
-
-    for topic in TOPICS:
-        for time_range, phrase in PERIODS:
-            specs.extend(
-                [
-                    Spec(f"Quais repositorios do topico {topic} mais executaram workflows nos {phrase}?", "rank_volume", dimension="repository", topic=topic, time_range=time_range),
-                    Spec(f"Quais repositorios do topico {topic} com maior volume de falhas nos {phrase}?", "rank_failure", dimension="repository", topic=topic, time_range=time_range),
-                    Spec(f"Quantos repositorios do topico {topic} tiveram execucoes de workflows nos {phrase}?", "count", dimension="repository", topic=topic, time_range=time_range),
-                ]
-            )
-
-    seen = set()
-    unique_specs = []
-    for spec in specs:
-        if spec.question not in seen:
-            seen.add(spec.question)
-            unique_specs.append(spec)
-    return unique_specs
+def build_specs(all_docs: list[dict], config: dict) -> list[Spec]:
+    context = discover_context(all_docs, config)
+    items = build_catalog(context)
+    return [spec_from_item(item) for item in items]
 
 
 def load_documents() -> list[dict]:
     config = load_config(str(ROOT / "config.yaml"))
     client = get_client(config)
-    response = client.search(index=get_index(config), size=2000, sort=["_doc"])
+    response = client.search(index=get_index(config), size=5000, sort=["_doc"])
     return [hit["_source"] for hit in response["hits"]["hits"]]
 
 
 def main(limit: int | None = None, start: int = 1):
-    specs = build_specs()
     assert_true(start >= 1, "O parâmetro --start deve ser >= 1.")
-    if limit is not None:
-        specs = specs[:limit]
-
+    config = load_config(str(ROOT / "config.yaml"))
     docs = load_documents()
     assert_true(len(docs) > 0, "Nenhum documento encontrado no Elasticsearch.")
+    specs = build_specs(docs, config)
+    if limit is not None:
+        specs = specs[:limit]
 
     slowest = ("", 0.0)
     total = len(specs)

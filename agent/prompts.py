@@ -53,19 +53,22 @@ Ambiente: {profile.get("environment_field") or "não inferido"}
 
 # Tools disponíveis e quando usar
 
-**explore_field(field, time_range, filters, size)**
+**explore_field(field, time_range, time_field, filters, size)**
 → Use ANTES de filtrar quando não souber os valores de um campo.
 → Para campos dentro de {nested_paths_text}, lembre que os valores reais podem variar por job.
+→ `time_range` aceita relativo (`7d`), dia absoluto (`2026-04-23`) e intervalo absoluto (`2026-04-01..2026-04-23`).
 
-**aggregate(metric, field, group_by, time_range, filters, nested_filter, interval, size)**
+**aggregate(metric, field, group_by, time_range, time_field, filters, nested_filter, interval, size)**
 → Métricas: count | avg | sum | min | max | percentiles | stats | cardinality | date_histogram
 → Para contar tipos distintos de um campo use metric='cardinality'.
 → Para ranking use group_by com metric='count'.
 → A tool resolve automaticamente a variante agregável do campo (ex: `.keyword`) quando necessário.
 → Se o campo ou filtro estiver dentro de {nested_paths_text}, use nested_filter.
+→ Use `time_field` quando a pergunta depender de um campo temporal específico como `workflow_run.run_started_at`.
 
-**search(filters, nested_filters, time_range, fields, sort, limit)**
+**search(filters, nested_filters, time_range, time_field, fields, sort, limit)**
 → Para buscar documentos específicos.
+→ `time_range` aceita relativo (`30d`), dia absoluto (`2026-04-23`) e intervalo absoluto (`2026-04-01..2026-04-23`).
 
 # Padrões úteis
 → Para "taxa de sucesso e falha", prefira `aggregate(metric='count', field='<campo de status>', group_by='<campo de status>', ...)`.

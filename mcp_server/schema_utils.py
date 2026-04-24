@@ -267,11 +267,11 @@ def infer_schema_profile(fields: dict) -> dict:
             fields,
             [
                 "deployment.task",
-                "deployment.environment",
-                "deployment_status.environment",
                 "workflow_run.name",
                 "workflow.name",
                 "check_run.name",
+                "deployment.environment",
+                "deployment_status.environment",
             ],
         ),
         "environment_field": _pick_first(
